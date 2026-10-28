@@ -1,0 +1,12 @@
+{
+  "name": "omni-agent",
+  "owner": { "name": "Alex" },
+  "description": "Marketplace für das Omni-Agent-Plugin",
+  "plugins": [
+    {
+      "name": "omni-agent",
+      "source": "./",
+      "description": "Hintergrund-Agents mit Fremdmodellen und austauschbarer Agent-CLI"
+    }
+  ]
+}

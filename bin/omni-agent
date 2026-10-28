@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Omni-Agent-Kern. Findet seine Bibliothek über den eigenen Dateipfad (auch über Symlink),
+weil ${CLAUDE_PLUGIN_ROOT} in Bash-Tool-Befehlen nicht gesetzt ist."""
+import os
+import sys
+
+if sys.version_info < (3, 10):
+    sys.exit("Omni-Agent braucht Python 3.10 oder neuer.")
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+
+from omni_agent.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,136 @@
+{
+  "_hinweis": "Anbieter-Daten. Stand der Prüfung gegen die Herstellerseiten: 28.10.2026. 'geprueft' bedeutet: von uns live ausprobiert, nicht nur aus der Doku gelesen.",
+  "anbieter": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "protokolle": [
+        "anthropic"
+      ],
+      "base_url": "https://api.deepseek.com/anthropic",
+      "key_envs": [
+        "DEEPSEEK_API_KEY"
+      ],
+      "modelle": {
+        "standard": "deepseek-flash",
+        "stark": "deepseek-v4-pro"
+      },
+      "region": "China",
+      "geprueft": true,
+      "hinweis": "Daten werden in China verarbeitet, Training ist vorgesehen. Such- und Abruf-API ab 01.11.2026 kostenpflichtig. Keine personenbezogenen Daten senden."
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "protokolle": [
+        "anthropic"
+      ],
+      "base_url": "https://openrouter.ai/api",
+      "key_envs": [
+        "OPENROUTER_API_KEY"
+      ],
+      "modelle": {},
+      "leere_vars": [
+        "ANTHROPIC_API_KEY"
+      ],
+      "region": "nicht belegt",
+      "geprueft": false,
+      "hinweis": "Modell mit --modell wählen (Name aus dem OpenRouter-Katalog). Laut Claude-Code-Doku ist nur Anthropic als Anbieter zugesagt, andere Modelle gehen, sind aber nicht garantiert. ANTHROPIC_API_KEY wird dem Lauf leer mitgegeben.",
+      "modell_pflicht": true
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi (Moonshot)",
+      "protokolle": [
+        "anthropic"
+      ],
+      "base_url": "https://api.moonshot.ai/anthropic",
+      "key_envs": [
+        "MOONSHOT_API_KEY"
+      ],
+      "modelle": {
+        "standard": "kimi-k3[1m]",
+        "klein": "kimi-k2.7-code"
+      },
+      "region": "nicht belegt",
+      "geprueft": false,
+      "hinweis": "Laut Herstellerdoku, nicht getestet. Alle Modellstufen werden gesetzt, sonst scheitern Hintergrundaufgaben still."
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (lokal)",
+      "protokolle": [
+        "anthropic"
+      ],
+      "base_url": "http://localhost:11434",
+      "key_envs": [],
+      "key_platzhalter": "ollama",
+      "modelle": {
+        "standard": "qwen3.5"
+      },
+      "region": "lokal",
+      "geprueft": false,
+      "hinweis": "Daten bleiben auf dem Rechner. Das Modell braucht Werkzeug-Unterstützung und mindestens 64k Kontext. Keine Websuche. Mindestversion von Ollama nicht belegt."
+    },
+    {
+      "id": "eurouter",
+      "name": "EUrouter",
+      "protokolle": [
+        "openai-chat",
+        "openai-responses"
+      ],
+      "base_url": "https://api.eurouter.ai/api/v1",
+      "key_envs": [
+        "EUROUTER_API_KEY"
+      ],
+      "modelle": {},
+      "region": "EU (laut Anbieter)",
+      "geprueft": false,
+      "hinweis": "Spricht nur OpenAI-Formate. Mit --runner opencode oder codex nutzen, oder Claude Code über das Extra LiteLLM (--ueber-litellm). Modellname aus dem EUrouter-Katalog mit --modell wählen.",
+      "modell_pflicht": true
+    },
+    {
+      "id": "nvidia",
+      "name": "Nvidia NIM",
+      "protokolle": [
+        "openai-chat"
+      ],
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "key_envs": [
+        "NVIDIA_API_KEY"
+      ],
+      "modelle": {
+        "standard": "z-ai/glm-5.3-flash"
+      },
+      "litellm": {
+        "praefix": "nvidia_nim",
+        "key_env": "NVIDIA_NIM_API_KEY",
+        "api_base": null
+      },
+      "region": "nicht belegt",
+      "geprueft": false,
+      "hinweis": "Nur Chat-Completions. Mit --runner opencode oder Claude Code über das Extra LiteLLM (--ueber-litellm). Free-Tier-Bedingungen nicht belegt."
+    },
+    {
+      "id": "claude-konto",
+      "name": "Claude mit anderem Konto",
+      "protokolle": [
+        "anthropic"
+      ],
+      "base_url": null,
+      "key_envs": [
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ],
+      "modelle": {
+        "standard": "sonnet",
+        "klein": "haiku",
+        "stark": "opus"
+      },
+      "alle_stufen": false,
+      "region": "Anthropic",
+      "geprueft": false,
+      "hinweis": "Anderes Konto heißt eigene Kontingente. Empfohlen ist ein API-Schlüssel (ANTHROPIC_API_KEY). Ob ein unbeaufsichtigter Lauf mit einem Abo-Token (CLAUDE_CODE_OAUTH_TOKEN) nach Anthropics Bedingungen zulässig ist, ist nicht belegt. Omni-Agent speichert diesen Token nie."
+    }
+  ]
+}
