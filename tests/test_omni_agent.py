@@ -541,12 +541,35 @@ class EndeZuEnde(MitHome):
         self.assertEqual(stat.S_IMODE(self.home.stat().st_mode), 0o700)
         self.assertNotIn(FAKE_KEY, datei.read_text())
 
-    def test_setup_repariert_veralteten_befehls_link(self):
+    def test_setup_ersetzt_veralteten_link_durch_weiterleiter_der_updates_ueberlebt(self):
         link_ordner = Path(self.tmp.name) / ".local" / "bin"
         link_ordner.mkdir(parents=True)
         (link_ordner / "omni-agent").symlink_to(Path(self.tmp.name) / "weg" / "omni-agent")  # zeigt ins Leere
         self.lauf("setup")
-        self.assertEqual((link_ordner / "omni-agent").resolve(), BIN.resolve())
+        link = link_ordner / "omni-agent"
+        self.assertFalse(link.is_symlink())
+        self.assertTrue(os.access(link, os.X_OK))
+        self.assertIn("omni-agent-shim", link.read_text())
+        # Plugin-Verzeichnis nachbauen: Weiterleiter folgt installed_plugins.json, nicht einem festen Pfad
+        plugins = Path(self.tmp.name) / ".claude" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "installed_plugins.json").write_text(json.dumps(
+            {"plugins": {"omni-agent@omni-agent": [{"installPath": str(WURZEL)}]}}))
+        env = {"PATH": os.environ["PATH"], "HOME": self.tmp.name, "OMNI_AGENT_HOME": str(self.home)}
+        erg = subprocess.run([str(link), "--version"], capture_output=True, text=True, env=env)
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        from omni_agent import VERSION
+        self.assertIn(VERSION, erg.stdout)
+
+    def test_setup_fasst_fremden_befehl_nicht_an(self):
+        link_ordner = Path(self.tmp.name) / ".local" / "bin"
+        link_ordner.mkdir(parents=True)
+        fremd = link_ordner / "omni-agent"
+        fremd.write_text("#!/bin/sh\necho fremd\n")
+        os.chmod(fremd, 0o755)
+        env = {"PATH": f"{link_ordner}:{os.environ['PATH']}", "HOME": self.tmp.name, "OMNI_AGENT_HOME": str(self.home)}
+        subprocess.run([sys.executable, str(BIN), "setup"], capture_output=True, text=True, env=env)
+        self.assertIn("fremd", fremd.read_text())
 
     def test_doctor_nennt_nie_den_schluessel(self):
         erg = self.lauf("doctor")

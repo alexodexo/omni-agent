@@ -16,6 +16,28 @@ from .konfig import (
 from .lauf import fuehre_aus
 from .runner import RUNNER, passt
 
+SHIM_MARKE = "omni-agent-shim"
+SHIM = """#!/usr/bin/env python3
+# omni-agent-shim: findet die installierte Plugin-Version, auch nach Updates (Aufruf ändert sich nie)
+import glob, json, os, sys
+home = os.path.expanduser("~")
+ziel = None
+try:
+    with open(os.path.join(home, ".claude", "plugins", "installed_plugins.json"), encoding="utf-8") as f:
+        for eintrag in json.load(f).get("plugins", {}).get("omni-agent@omni-agent", []):
+            kandidat = os.path.join(eintrag["installPath"], "bin", "omni-agent")
+            if os.path.isfile(kandidat):
+                ziel = kandidat
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+if ziel is None:
+    treffer = glob.glob(os.path.join(home, ".claude", "plugins", "cache", "omni-agent", "omni-agent", "*", "bin", "omni-agent"))
+    ziel = max(treffer, key=os.path.getmtime) if treffer else None
+if ziel is None:
+    sys.exit("omni-agent: Plugin nicht gefunden. Installieren: claude plugin install omni-agent@omni-agent")
+os.execv(sys.executable, [sys.executable, ziel] + sys.argv[1:])
+"""
+
 ENV_VORLAGE = """# Omni-Agent: Schlüssel. Eine Zeile je Anbieter, Format NAME=wert, keine Anführungszeichen nötig.
 # Diese Datei bleibt auf deinem Rechner (Rechte 600). Nie in Git, nie in einen Chat kopieren.
 # Alternativ die Variable in der Shell setzen (export NAME=wert), die Umgebung hat Vorrang.
@@ -102,22 +124,23 @@ def cmd_setup(args) -> int:
         print(f"Schlüsseldatei vorhanden: {datei}")
 
     bin_ziel = Path.home() / ".local" / "bin"
-    quelle = WURZEL / "bin" / "omni-agent"
     link = bin_ziel / "omni-agent"
-    if not shutil.which("omni-agent"):
+    vorhanden = shutil.which("omni-agent")
+    unsere_datei = link.is_symlink() or (link.is_file() and SHIM_MARKE in link.read_text(encoding="utf-8", errors="ignore"))
+    if unsere_datei or not vorhanden:
         try:
             bin_ziel.mkdir(parents=True, exist_ok=True)
-            if link.is_symlink() and link.resolve() != quelle.resolve():
-                link.unlink()  # zeigt ins Leere oder auf eine alte Fassung (Plugin-Cache wechselt mit jeder Version)
-            if not link.exists() and not link.is_symlink():
-                link.symlink_to(quelle)
-                print(f"Befehl verlinkt: {link}")
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.write_text(SHIM, encoding="utf-8")
+            os.chmod(link, 0o755)
+            print(f"Befehl eingerichtet: {link} (folgt automatisch der installierten Plugin-Version)")
             if str(bin_ziel) not in os.environ.get("PATH", "").split(os.pathsep):
                 print(f"Hinweis: {bin_ziel} ist nicht im PATH. In die Shell-Konfiguration: export PATH=\"$HOME/.local/bin:$PATH\"")
         except OSError as fehler:
-            print(f"Befehl konnte nicht verlinkt werden ({fehler}). Direkt aufrufen: {quelle}")
+            print(f"Befehl konnte nicht eingerichtet werden ({fehler}). Direkt aufrufen: {WURZEL / 'bin' / 'omni-agent'}")
     else:
-        print(f"Befehl 'omni-agent' ist im PATH: {shutil.which('omni-agent')}")
+        print(f"Befehl 'omni-agent' ist im PATH: {vorhanden}")
 
     if args.anbieter:
         a = lade_anbieter().get(args.anbieter)
