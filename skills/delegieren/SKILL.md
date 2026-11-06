@@ -16,5 +16,5 @@ Nicht geeignet: Aufgaben, die den Kontext dieser Unterhaltung brauchen, die schr
 # Vorgehen
 
 1. `omni-agent doctor` prüfen, ob ein Anbieter mit Schlüssel bereitsteht. Wenn nicht: auf `/omni-agent:setup` verweisen und die Aufgabe selbst erledigen.
-2. Der Nutzerin in zwei Zeilen vorschlagen: Welche Aufgabe, welcher Anbieter, wo liegen die Daten (`omni-agent anbieter`).
+2. Der Nutzerin in zwei Zeilen vorschlagen: Welche Aufgabe, welcher Anbieter oder welches Claude-Konto (`omni-agent konto list` zeigt auch die Auslastung), wo liegen die Daten (`omni-agent anbieter`).
 3. Nach ihrem Ja den Ablauf von `/omni-agent:run` anwenden (Hintergrund starten, nicht pollen, Bericht lesen und einordnen).

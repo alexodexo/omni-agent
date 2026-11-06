@@ -343,6 +343,34 @@ class Konten(MitHome):
         self.assertIn("Abfrage fehlgeschlagen", text)
         self.assertNotIn(FAKE_KEY, text)
 
+    def test_standard_konto_setzen_lesen_loeschen(self):
+        self._cli("konto", "add", "fbs", "--art", "token")
+        self.assertIn("keiner", self._cli("konto", "standard").stdout)
+        self.assertEqual(self._cli("konto", "standard", "fbs").returncode, 0)
+        self.assertIn("claude-fbs", self._cli("konto", "standard").stdout)
+        self.assertIn("[STANDARD]", self._cli("konto", "list", "--ohne-nutzung").stdout)
+        self._cli("konto", "standard", "--loeschen")
+        self.assertIn("keiner", self._cli("konto", "standard").stdout)
+
+    def test_standard_nur_fuer_vorhandenes_konto(self):
+        self.assertEqual(self._cli("konto", "standard", "gibtsnicht").returncode, 2)
+
+    def test_run_ohne_anbieter_und_ohne_standard_scheitert_klar(self):
+        erg = self._cli("run", "--text", "x")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("Standard", erg.stderr + erg.stdout)
+
+    def test_run_konto_und_anbieter_schliessen_sich_aus(self):
+        erg = self._cli("run", "--text", "x", "--konto", "fbs", "--anbieter", "deepseek")
+        self.assertEqual(erg.returncode, 2)
+
+    def test_run_ohne_anbieter_nimmt_standard_konto(self):
+        self._cli("konto", "add", "fbs", "--art", "token")
+        self._cli("konto", "standard", "fbs")
+        erg = self._cli("run", "--text", "x")  # Schlüssel fehlt: scheitert, nennt aber den Standard
+        self.assertIn("Standard: claude-fbs", erg.stdout)
+        self.assertEqual(erg.returncode, 2)
+
     def test_konto_im_anbieter_befehl_sichtbar(self):
         self._cli("konto", "add", "fps", "--art", "api")
         self.assertIn("claude-fps", self._cli("anbieter").stdout)
@@ -380,9 +408,11 @@ class Plugin(unittest.TestCase):
             kopf = (ordner / "SKILL.md").read_text().split("---")[1]
             self.assertIn("description:", kopf, ordner.name)
 
-    def test_run_skill_ist_nur_manuell(self):
+    def test_run_skill_ist_fuer_claude_aufrufbar_aber_nur_auf_ausdruecklichen_wunsch(self):
+        # Sonst scheitert /goal: ein gesperrter Skill kann von Claude nicht selbst gerufen werden.
         kopf = (WURZEL / "skills" / "run" / "SKILL.md").read_text().split("---")[1]
-        self.assertIn("disable-model-invocation: true", kopf)
+        self.assertNotIn("disable-model-invocation", kopf)
+        self.assertIn("ausdrücklich", kopf)
 
 
 class Extras(unittest.TestCase):

@@ -10,7 +10,7 @@ from pathlib import Path
 from . import VERSION, extras
 from .anbieter import lade_anbieter
 from .konfig import (
-    EXIT_KONFIG, KonfigFehler, WURZEL, env_datei, hole_schluessel, home, laeufe_ordner,
+    EXIT_KONFIG, KonfigFehler, WURZEL, setze_standard_anbieter, standard_anbieter, env_datei, hole_schluessel, home, laeufe_ordner,
     lese_schluesseldatei, pruefe_erreichbar,
 )
 from .lauf import fuehre_aus
@@ -144,6 +144,19 @@ def cmd_setup(args) -> int:
 # ---------- run ----------
 
 def cmd_run(args) -> int:
+    if args.konto and args.anbieter:
+        raise KonfigFehler("--konto und --anbieter schließen sich aus.")
+    if args.konto:
+        from .konten import konto_id
+        args.anbieter = konto_id(args.konto)
+    if not args.anbieter:
+        args.anbieter = standard_anbieter()
+        if not args.anbieter:
+            raise KonfigFehler(
+                "Kein Anbieter angegeben und kein Standard gesetzt. Entweder --anbieter/--konto nennen "
+                "oder einen Standard festlegen: omni-agent konto standard NAME"
+            )
+        print(f"Kein Anbieter angegeben, Standard: {args.anbieter}")
     return fuehre_aus(args)
 
 
@@ -205,13 +218,27 @@ def cmd_status(args) -> int:
 
 def cmd_konto(args) -> int:
     from . import konten
+    if args.aktion == "standard":
+        if args.loeschen:
+            setze_standard_anbieter(None)
+            print("Standard entfernt: ohne --anbieter läuft nichts mehr.")
+        elif args.name:
+            kid = konten.konto_id(args.name)
+            if kid not in lade_anbieter():
+                raise KonfigFehler(f"Konto '{args.name}' gibt es nicht. Vorhandene: omni-agent konto list")
+            setze_standard_anbieter(kid)
+            print(f"Standard ist jetzt {kid}: `omni-agent run …` ohne --anbieter nutzt dieses Konto.")
+        else:
+            print(f"Standard: {standard_anbieter() or 'keiner gesetzt'}")
+        return 0
     if args.aktion == "list":
         alle = konten.liste()
         if not alle:
             print("Noch kein benanntes Konto. Anlegen: omni-agent konto add NAME --art api|token")
             return 0
         for k in alle:
-            print(f"{k['name']:<12} --anbieter {k['id']:<18} {konten.ARTEN[k['art']][1]}")
+            std = "  [STANDARD]" if k["id"] == standard_anbieter() else ""
+            print(f"{k['name']:<12} --anbieter {k['id']:<18} {konten.ARTEN[k['art']][1]}{std}")
             print(f"{'':<12} Schlüssel {k['schluessel']} ({k['env']})")
             if not args.ohne_nutzung:
                 print(f"{'':<12} Nutzung: {konten.nutzung(k)}")
@@ -310,7 +337,8 @@ def baue_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("run", help="Auftrag ausführen (blockierend; im Hintergrund starten, wenn Claude es tut)")
     s.add_argument("auftrag", nargs="?", help="Auftragsdatei (Markdown)")
     s.add_argument("--text", help="Auftrag direkt als Text statt als Datei")
-    s.add_argument("--anbieter", required=True, help="siehe: omni-agent anbieter")
+    s.add_argument("--anbieter", help="siehe: omni-agent anbieter; ohne Angabe gilt der Standard (omni-agent konto standard)")
+    s.add_argument("--konto", help="Kurzform für --anbieter claude-<name>, z. B. --konto felipe")
     s.add_argument("--modell", help="Modellname oder Kurzname (standard, stark, klein)")
     s.add_argument("--runner", help="claude, opencode, codex oder dsh; ohne Angabe der erste passende installierte")
     s.add_argument("--werkzeuge", help="z. B. 'lesen,schreiben', '+shell', '-web_suche' (Standard: lesen,schreiben,web_suche,web_laden)")
@@ -328,12 +356,13 @@ def baue_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_status)
 
     sub.add_parser("anbieter", help="Anbieter mit Datenort auflisten").set_defaults(fn=cmd_anbieter)
-    s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove")
-    s.add_argument("aktion", choices=["add", "list", "remove"])
+    s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove, standard")
+    s.add_argument("aktion", choices=["add", "list", "remove", "standard"])
     s.add_argument("name", nargs="?", help="Kontoname, z. B. felipe oder fps")
     s.add_argument("--art", choices=["api", "token"], default="api", help="api = ANTHROPIC_API_KEY (empfohlen), token = Abo-Token")
     s.add_argument("--titel", help="Anzeigename, z. B. 'Felipes Konto'")
     s.add_argument("--uebernehme", metavar="ENV_NAME", help="vorhandene Zeile der Schlüsseldatei unter dem Kontonamen weiterverwenden (z. B. CLAUDE_CODE_OAUTH_TOKEN)")
+    s.add_argument("--loeschen", action="store_true", help="bei standard den Standard entfernen")
     s.add_argument("--ersetzen", action="store_true", help="vorhandenes Konto gleichen Namens überschreiben")
     s.add_argument("--mit-schluessel", action="store_true", help="bei remove auch die Schlüsselzeile löschen")
     s.add_argument("--ohne-nutzung", action="store_true", help="bei list keine Limit-Abfrage machen (kein Netz)")

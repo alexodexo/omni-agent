@@ -1,7 +1,6 @@
 ---
-description: Startet einen Hintergrund-Agent mit einem Fremdmodell (DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, anderes Claude-Konto) für einen Auftrag und liefert einen Bericht
+description: Startet einen Hintergrund-Agent über Omni-Agent für einen Auftrag und liefert einen Bericht. Nur nutzen, wenn die Nutzerin Omni-Agent, einen Anbieter (DeepSeek, OpenRouter, Kimi, Ollama, EUrouter) oder ein Claude-Konto (fbs, felipe, llc) ausdrücklich nennt oder verlangt; auch in einem /goal erlaubt, wenn das Ziel es so vorgibt
 argument-hint: "[anbieter] [auftrag]"
-disable-model-invocation: true
 allowed-tools: Bash(omni-agent *)
 ---
 
@@ -11,13 +10,14 @@ Eingabe der Nutzerin: `$ARGUMENTS`
 
 ## Ablauf
 
-1. **Anbieter klären.** Das erste Wort ist der Anbieter, wenn es einer von `omni-agent anbieter` ist. Fehlt er, frage kurz, welchen; `omni-agent doctor` zeigt, für welche ein Schlüssel gesetzt ist. Nimm keinen Anbieter ohne Schlüssel.
-2. **Datenschutz prüfen, bevor etwas startet.** Der Datenort steht in `omni-agent anbieter` (DeepSeek: China). Enthält der Auftrag personenbezogene Daten, Zugangsdaten, Firmen-Interna oder Dateiinhalte, die die Nutzerin nicht ausdrücklich freigegeben hat, frage vorher nach. Für Personenbezug: `ollama` (lokal) oder `eurouter`.
+1. **Anbieter oder Konto klären.** Nennt die Nutzerin ein Claude-Konto (`fbs`, `felipe`, `llc`, siehe `omni-agent konto list`), nimm `--konto <name>`. Nennt sie einen Fremdanbieter, nimm `--anbieter <id>` (Liste: `omni-agent anbieter`). Nennt sie nichts, lass beides weg: Dann läuft der **Standard** (`omni-agent konto standard`, derzeit ein Claude-Konto). Ist keiner gesetzt, frage kurz. Nimm keinen Anbieter ohne Schlüssel (`omni-agent doctor`). Ein Fremdanbieter wird nie stillschweigend als Standard gewählt.
+   Vor einem Lauf auf einem Abo-Konto kann `omni-agent konto list` die Auslastung zeigen: Ist ein Konto fast an seiner Grenze, nenne das und schlage ein anderes vor.
+2. **Datenschutz prüfen, bevor etwas startet** (bei einem Claude-Konto genügt der Gedanke an fremde Kontingente; Datenort ist Anthropic wie hier). Der Datenort steht in `omni-agent anbieter` (DeepSeek: China). Enthält der Auftrag personenbezogene Daten, Zugangsdaten, Firmen-Interna oder Dateiinhalte, die die Nutzerin nicht ausdrücklich freigegeben hat, frage vorher nach. Für Personenbezug: `ollama` (lokal) oder `eurouter`.
 3. **Auftrag formulieren.** Ein Ziel, ein erwartetes Ergebnis, kein Verweis auf diese Unterhaltung (der Agent kennt sie nicht). Kurz: `--text "…"`. Lang: Datei schreiben und den Pfad übergeben.
 4. **Im Hintergrund starten.** Rufe das Bash-Werkzeug mit `run_in_background: true` auf:
 
    ```
-   omni-agent run --anbieter <anbieter> --text "<auftrag>"
+   omni-agent run [--konto <name> | --anbieter <id>] --text "<auftrag>"
    ```
 
    Nützliche Zusätze: `--modell <name>` (OpenRouter und EUrouter verlangen ihn), `--runner opencode` (für EUrouter, Nvidia), `--max-runden 12`, `--zeit 900`.

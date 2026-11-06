@@ -87,6 +87,7 @@ omni-agent konto remove fps --mit-schluessel
 - **Art:** `api` ist empfohlen (`ANTHROPIC_API_KEY`). Ein Abo-Token (`--art token`, `CLAUDE_CODE_OAUTH_TOKEN`) für unbeaufsichtigte Läufe ist bei Anthropic nicht ausdrücklich geregelt; ob das erlaubt ist, ist **nicht belegt**. Die Entscheidung liegt bei dir.
 - **Schlüssel nie in den Chat.** `konto add` fragt im eigenen Terminal ab, oder du trägst die Zeile selbst in die Datei ein. Eine schon vorhandene Zeile übernimmst du mit `--uebernehme CLAUDE_CODE_OAUTH_TOKEN`.
 - **Nutzung in `konto list`:** je Abo-Konto Auslastung der 5-Stunden- und 7-Tage-Grenze samt Rücksetzzeit, bei API-Schlüsseln die freien Anfragen und Tokens. Das kostet eine Ein-Token-Anfrage je Konto (Haiku) und wird aus den Rate-Limit-Headern gelesen; `--ohne-nutzung` überspringt es. Live geprüft nur für Abo-Token; bei API-Schlüsseln stehen die Headernamen nach Anthropics Doku, ungeprüft. Den Kontotyp (Pro, Max) liefern diese Header nicht. Ein leeres Fenster („5 Std –") heißt: gerade läuft keins.
+- **Standard-Konto:** `omni-agent konto standard fbs` legt fest, was ohne `--anbieter` läuft. Kurzform für ein anderes Konto: `--konto felipe`. Fremdanbieter wie DeepSeek werden nie als Standard gewählt, solange du es nicht selbst festlegst.
 - Konten laufen nur mit dem Runner `claude`. Der Anbieter `claude-konto` bleibt als Ein-Konto-Kurzweg (`ANTHROPIC_API_KEY`).
 
 ## Anbieter und Runner passen zusammen

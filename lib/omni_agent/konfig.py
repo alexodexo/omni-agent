@@ -1,4 +1,5 @@
 """Pfade, Schlüsselquellen und gemeinsame Fehlerklassen. Nur Standardbibliothek."""
+import json
 import os
 import socket
 from pathlib import Path
@@ -91,3 +92,31 @@ def pruefe_erreichbar(base_url: str, zeit: float = 5.0) -> None:
             return
     except OSError as fehler:
         raise EndpunktFehler(f"{host}:{port} nicht erreichbar ({fehler.__class__.__name__}: {fehler})") from fehler
+
+
+def config_datei() -> Path:
+    return home() / "config.json"
+
+
+def lese_config() -> dict:
+    try:
+        daten = json.loads(config_datei().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return daten if isinstance(daten, dict) else {}
+
+
+def standard_anbieter() -> str | None:
+    """Anbieter, der ohne --anbieter benutzt wird. Nur gesetzt, wenn die Nutzerin es ausdrücklich so will."""
+    wert = lese_config().get("standard_anbieter")
+    return wert if isinstance(wert, str) and wert else None
+
+
+def setze_standard_anbieter(anbieter_id: str | None) -> None:
+    daten = lese_config()
+    if anbieter_id:
+        daten["standard_anbieter"] = anbieter_id
+    else:
+        daten.pop("standard_anbieter", None)
+    home().mkdir(parents=True, exist_ok=True)
+    config_datei().write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

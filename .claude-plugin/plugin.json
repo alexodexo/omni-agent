@@ -1,6 +1,6 @@
 {
   "name": "omni-agent",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Startet Hintergrund-Agents mit austauschbarem Modell-Anbieter (DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, anderes Claude-Konto) und austauschbarer Agent-CLI (Claude Code, opencode, codex)",
   "author": {
     "name": "Alex"
