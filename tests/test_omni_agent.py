@@ -315,7 +315,8 @@ class Konten(MitHome):
              "anthropic-ratelimit-unified-status": "allowed"}
         text = konten.nutzung_text(h, "token")
         self.assertIn("5 Std 4%", text)
-        self.assertIn("7 Tage 29%", text)
+        self.assertIn("7 Tage 29%, Reset", text)
+        self.assertIn("(in ", text)
         self.assertNotIn("STATUS", text)
         h["anthropic-ratelimit-unified-status"] = "rejected"
         self.assertIn("STATUS: rejected", konten.nutzung_text(h, "token"))

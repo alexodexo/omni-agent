@@ -221,6 +221,18 @@ def _zeit(epoch: str) -> str:
         return "?"
 
 
+def _in(epoch: str) -> str:
+    import time
+    try:
+        rest = int(epoch) - int(time.time())
+    except ValueError:
+        return ""
+    if rest <= 0:
+        return "jetzt"
+    tage, std, minuten = rest // 86400, rest % 86400 // 3600, rest % 3600 // 60
+    return f"{tage} Tg {std} Std" if tage else (f"{std} Std {minuten} Min" if std else f"{minuten} Min")
+
+
 def _prozent(wert: str | None) -> str:
     try:
         return f"{round(float(wert) * 100)}%"
@@ -235,10 +247,10 @@ def nutzung_text(header: dict, art: str) -> str:
         for fenster, name in (("5h", "5 Std"), ("7d", "7 Tage")):
             u = header.get(f"anthropic-ratelimit-unified-{fenster}-utilization")
             r = header.get(f"anthropic-ratelimit-unified-{fenster}-reset")
-            teile.append(f"{name} {_prozent(u)}" + (f" (zurück {_zeit(r)})" if u is not None and r else ""))
+            teile.append(f"{name} {_prozent(u)}" + (f", Reset {_zeit(r)} (in {_in(r)})" if u is not None and r else ""))
         status = header.get("anthropic-ratelimit-unified-status", "")
         zusatz = "" if status in ("", "allowed") else f"   STATUS: {status}"
-        return "   ".join(teile) + zusatz
+        return "  |  ".join(teile) + zusatz
     teile = []
     for schluessel, name in (("requests", "Anfragen"), ("tokens", "Tokens")):
         rest = header.get(f"anthropic-ratelimit-{schluessel}-remaining")
