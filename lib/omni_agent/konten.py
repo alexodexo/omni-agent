@@ -175,3 +175,86 @@ def entferne(name: str, mit_schluessel: bool = False) -> None:
         rest = [z for z in zeilen if _name_der_zeile(z) != env]
         if len(rest) != len(zeilen):
             _schreibe_env(rest)
+
+
+# ---------- Nutzung / Limits ----------
+
+NUTZUNG_MODELL = "claude-haiku-5-5"
+MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+
+
+def _hole_header(env_name: str, art: str, schluessel: str) -> dict:
+    """Eine Ein-Token-Anfrage an das kleinste Modell; die Antwort trägt die Limits als Header.
+
+    Verbraucht praktisch nichts, zählt aber als eine Anfrage. Der Schlüssel geht nur an api.anthropic.com.
+    """
+    import urllib.request
+    kopf = {"anthropic-version": "2023-06-01", "content-type": "application/json", "User-Agent": "omni-agent"}
+    system = None
+    if art == "token":
+        kopf["Authorization"] = f"Bearer {schluessel}"
+        kopf["anthropic-beta"] = "oauth-2025-04-20"
+        system = "You are Claude Code, Anthropic's official CLI for Claude."
+    else:
+        kopf["x-api-key"] = schluessel
+    koerper = {"model": NUTZUNG_MODELL, "max_tokens": 1, "messages": [{"role": "user", "content": "."}]}
+    if system:
+        koerper["system"] = system
+    anfrage = urllib.request.Request(MESSAGES_URL, data=json.dumps(koerper).encode(), headers=kopf)
+    try:
+        with urllib.request.urlopen(anfrage, timeout=20) as antwort:
+            return {k.lower(): v for k, v in antwort.headers.items()}
+    except Exception as fehler:  # HTTPError trägt Header und Status, Netzfehler nicht
+        kopfzeilen = getattr(fehler, "headers", None)
+        code = getattr(fehler, "code", None)
+        if kopfzeilen is not None and code == 429:
+            return {k.lower(): v for k, v in kopfzeilen.items()} | {"_status": "429"}
+        raise KonfigFehler(f"HTTP {code}" if code else f"nicht erreichbar ({type(fehler).__name__})") from None
+
+
+def _zeit(epoch: str) -> str:
+    from datetime import datetime
+    try:
+        t = datetime.fromtimestamp(int(epoch))
+        return f"{('Mo','Di','Mi','Do','Fr','Sa','So')[t.weekday()]} {t:%d.%m. %H:%M}"
+    except (ValueError, OSError):
+        return "?"
+
+
+def _prozent(wert: str | None) -> str:
+    try:
+        return f"{round(float(wert) * 100)}%"
+    except (TypeError, ValueError):
+        return "–"
+
+
+def nutzung_text(header: dict, art: str) -> str:
+    """Aus den Rate-Limit-Headern eine Zeile machen. Fehlendes Fenster heißt: dort läuft gerade keins."""
+    if art == "token":
+        teile = []
+        for fenster, name in (("5h", "5 Std"), ("7d", "7 Tage")):
+            u = header.get(f"anthropic-ratelimit-unified-{fenster}-utilization")
+            r = header.get(f"anthropic-ratelimit-unified-{fenster}-reset")
+            teile.append(f"{name} {_prozent(u)}" + (f" (zurück {_zeit(r)})" if u is not None and r else ""))
+        status = header.get("anthropic-ratelimit-unified-status", "")
+        zusatz = "" if status in ("", "allowed") else f"   STATUS: {status}"
+        return "   ".join(teile) + zusatz
+    teile = []
+    for schluessel, name in (("requests", "Anfragen"), ("tokens", "Tokens")):
+        rest = header.get(f"anthropic-ratelimit-{schluessel}-remaining")
+        grenze = header.get(f"anthropic-ratelimit-{schluessel}-limit")
+        if rest is not None and grenze is not None:
+            teile.append(f"{name} frei {rest}/{grenze}")
+    return "   ".join(teile) or "keine Limit-Angaben in der Antwort"
+
+
+def nutzung(konto: dict, abruf=_hole_header) -> str:
+    """Nutzungszeile für ein Konto aus liste(). Fehler werden Text, nie eine Ausnahme."""
+    if konto["schluessel"] != "gesetzt":
+        return "Schlüssel fehlt"
+    datei = lese_schluesseldatei()
+    wert = os.environ.get(konto["env"]) or datei.get(konto["env"])
+    try:
+        return nutzung_text(abruf(konto["env"], konto["art"], wert), konto["art"])
+    except KonfigFehler as fehler:
+        return f"Abfrage fehlgeschlagen: {fehler}"

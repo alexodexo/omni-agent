@@ -300,13 +300,47 @@ class Konten(MitHome):
     def test_list_und_remove(self):
         d = self._env_schreiben(f"OMNI_AGENT_KONTO_FPS={FAKE_KEY}\n")
         self._cli("konto", "add", "fps", "--art", "api")
-        liste = self._cli("konto", "list")
+        liste = self._cli("konto", "list", "--ohne-nutzung")
         self.assertIn("claude-fps", liste.stdout)
         self.assertIn("gesetzt", liste.stdout)
         self.assertNotIn(FAKE_KEY, liste.stdout)
         self._cli("konto", "remove", "fps", "--mit-schluessel")
         self.assertNotIn("OMNI_AGENT_KONTO_FPS", d.read_text())
-        self.assertIn("Noch kein", self._cli("konto", "list").stdout)
+        self.assertIn("Noch kein", self._cli("konto", "list", "--ohne-nutzung").stdout)
+
+    def test_nutzung_abo_aus_headern(self):
+        from omni_agent import konten
+        h = {"anthropic-ratelimit-unified-5h-utilization": "0.04", "anthropic-ratelimit-unified-5h-reset": "1793977200",
+             "anthropic-ratelimit-unified-7d-utilization": "0.29", "anthropic-ratelimit-unified-7d-reset": "1794499200",
+             "anthropic-ratelimit-unified-status": "allowed"}
+        text = konten.nutzung_text(h, "token")
+        self.assertIn("5 Std 4%", text)
+        self.assertIn("7 Tage 29%", text)
+        self.assertNotIn("STATUS", text)
+        h["anthropic-ratelimit-unified-status"] = "rejected"
+        self.assertIn("STATUS: rejected", konten.nutzung_text(h, "token"))
+
+    def test_nutzung_fehlendes_fenster_ist_strich(self):
+        from omni_agent import konten
+        self.assertIn("5 Std –", konten.nutzung_text({"anthropic-ratelimit-unified-7d-utilization": "0.1"}, "token"))
+
+    def test_nutzung_api_schluessel_aus_headern(self):
+        from omni_agent import konten
+        h = {"anthropic-ratelimit-requests-remaining": "49", "anthropic-ratelimit-requests-limit": "50",
+             "anthropic-ratelimit-tokens-remaining": "39000", "anthropic-ratelimit-tokens-limit": "40000"}
+        text = konten.nutzung_text(h, "api")
+        self.assertIn("Anfragen frei 49/50", text)
+        self.assertIn("Tokens frei 39000/40000", text)
+
+    def test_nutzung_fehler_wird_text_und_gibt_schluessel_nicht_preis(self):
+        from omni_agent import konten
+        konten.lege_an("fps", "api")
+        self._env_schreiben(f"OMNI_AGENT_KONTO_FPS={FAKE_KEY}\n")
+        def kaputt(env, art, schluessel):
+            raise KonfigFehler("HTTP 401")
+        text = konten.nutzung(konten.liste()[0], abruf=kaputt)
+        self.assertIn("Abfrage fehlgeschlagen", text)
+        self.assertNotIn(FAKE_KEY, text)
 
     def test_konto_im_anbieter_befehl_sichtbar(self):
         self._cli("konto", "add", "fps", "--art", "api")

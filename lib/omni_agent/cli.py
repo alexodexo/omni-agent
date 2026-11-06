@@ -211,7 +211,12 @@ def cmd_konto(args) -> int:
             print("Noch kein benanntes Konto. Anlegen: omni-agent konto add NAME --art api|token")
             return 0
         for k in alle:
-            print(f"{k['name']:<14} --anbieter {k['id']:<20} {konten.ARTEN[k['art']][1]:<26} Schlüssel {k['schluessel']}  ({k['env']})")
+            print(f"{k['name']:<12} --anbieter {k['id']:<18} {konten.ARTEN[k['art']][1]}")
+            print(f"{'':<12} Schlüssel {k['schluessel']} ({k['env']})")
+            if not args.ohne_nutzung:
+                print(f"{'':<12} Nutzung: {konten.nutzung(k)}")
+        if not args.ohne_nutzung:
+            print("\nNutzung = eine Ein-Token-Anfrage je Konto an api.anthropic.com (Haiku); --ohne-nutzung überspringt sie.")
         return 0
     if not args.name:
         raise KonfigFehler("Bitte einen Kontonamen angeben, z. B.: omni-agent konto add felipe --art token")
@@ -331,6 +336,7 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--uebernehme", metavar="ENV_NAME", help="vorhandene Zeile der Schlüsseldatei unter dem Kontonamen weiterverwenden (z. B. CLAUDE_CODE_OAUTH_TOKEN)")
     s.add_argument("--ersetzen", action="store_true", help="vorhandenes Konto gleichen Namens überschreiben")
     s.add_argument("--mit-schluessel", action="store_true", help="bei remove auch die Schlüsselzeile löschen")
+    s.add_argument("--ohne-nutzung", action="store_true", help="bei list keine Limit-Abfrage machen (kein Netz)")
     s.set_defaults(fn=cmd_konto)
     sub.add_parser("runner", help="Runner auflisten").set_defaults(fn=cmd_runner)
 
