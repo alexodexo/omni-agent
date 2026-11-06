@@ -24,4 +24,4 @@ Anbieter (optional): `$ARGUMENTS`
 
 - Fehlt Python 3.10 oder neuer, sage es klar: Omni-Agent braucht es (macOS, Linux, WSL).
 - Anbieter ohne Claude-Format (EUrouter, Nvidia) laufen mit `--runner opencode` (muss installiert sein) oder über das optionale Extra LiteLLM (`omni-agent extras litellm install`). Das Extra nur installieren, wenn die Nutzerin es will.
-- „Claude mit anderem Konto": ein API-Schlüssel ist der empfohlene Weg. Ein Abo-Token für unbeaufsichtigte Läufe ist bei Anthropic nicht ausdrücklich erlaubt. Sage das, bevor die Nutzerin sich dafür entscheidet.
+- Mehrere Claude-Konten: jedes bekommt einen Namen (`omni-agent konto add NAME --art api|token`, Anbieter dann `claude-NAME`). Den Schlüssel gibt die Nutzerin selbst im Terminal ein, nie im Chat. Bei einem einzelnen Konto: ein API-Schlüssel ist der empfohlene Weg. Ein Abo-Token für unbeaufsichtigte Läufe ist bei Anthropic nicht ausdrücklich erlaubt. Sage das, bevor die Nutzerin sich dafür entscheidet.

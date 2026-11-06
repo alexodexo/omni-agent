@@ -221,6 +221,98 @@ class ClaudeBefehl(unittest.TestCase):
         self.assertEqual(RUNNER["claude"].fortschritt("kein json", zustand), [])
 
 
+class Konten(MitHome):
+    def _cli(self, *argv, eingabe=None):
+        env = {"PATH": os.environ["PATH"], "HOME": self.tmp.name, "OMNI_AGENT_HOME": str(self.home)}
+        return subprocess.run([sys.executable, str(BIN), *argv], capture_output=True, text=True, env=env, input=eingabe)
+
+    def _env_schreiben(self, text):
+        self.home.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.home, 0o700)
+        d = self.home / "env"
+        d.write_text(text, encoding="utf-8")
+        os.chmod(d, 0o600)
+        return d
+
+    def test_beliebig_viele_konten_nebeneinander(self):
+        from omni_agent import konten
+        for n, art in (("felipe", "token"), ("fps", "api"), ("dritte-firma", "api")):
+            konten.lege_an(n, art)
+        self.assertEqual({k["name"] for k in konten.liste()}, {"felipe", "fps", "dritte-firma"})
+        self.assertEqual(hole_anbieter("claude-fps").key_envs, ("OMNI_AGENT_KONTO_FPS",))
+        self.assertEqual(hole_anbieter("claude-dritte-firma").key_envs, ("OMNI_AGENT_KONTO_DRITTE_FIRMA",))
+
+    def test_ungueltige_namen_abgelehnt(self):
+        from omni_agent import konten
+        for n in ("", "Felipe", "../x", "a b", "-x", "x" * 40):
+            with self.assertRaises(KonfigFehler, msg=n):
+                konten.lege_an(n, "api")
+
+    def test_doppelter_name_nur_mit_ersetzen(self):
+        from omni_agent import konten
+        konten.lege_an("fps", "api")
+        with self.assertRaises(KonfigFehler):
+            konten.lege_an("fps", "api")
+        konten.lege_an("fps", "token", ersetzen=True)
+        self.assertEqual(hole_anbieter("claude-fps").konto_art, "token")
+
+    def test_konto_nur_mit_claude_runner(self):
+        from omni_agent import konten
+        konten.lege_an("fps", "api")
+        a = hole_anbieter("claude-fps")
+        self.assertTrue(passt(a, RUNNER["claude"]))
+        self.assertFalse(passt(a, RUNNER["opencode"]))
+
+    def test_art_waehlt_den_richtigen_claude_schluessel(self):
+        from omni_agent import konten
+        konten.lege_an("tok", "token")
+        konten.lege_an("api", "api")
+        for name, erwartet, anderer in (("tok", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"), ("api", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")):
+            a = hole_anbieter(f"claude-{name}")
+            env = RUNNER["claude"].baue(ClaudeBefehl._ctx(self, f"claude-{name}", modell="sonnet", base_url=None, schluessel={a.key_envs[0]: FAKE_KEY})).env
+            self.assertEqual(env[erwartet], FAKE_KEY)
+            self.assertNotIn(anderer, env)
+            self.assertNotIn("ANTHROPIC_BASE_URL", env)
+
+    def test_add_uebernimmt_vorhandene_zeile_ohne_wert_zu_zeigen(self):
+        d = self._env_schreiben(f"DEEPSEEK_API_KEY=abc\nCLAUDE_CODE_OAUTH_TOKEN={FAKE_KEY}\n")
+        erg = self._cli("konto", "add", "felipe", "--art", "token", "--uebernehme", "CLAUDE_CODE_OAUTH_TOKEN")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertNotIn(FAKE_KEY, erg.stdout + erg.stderr)
+        inhalt = d.read_text()
+        self.assertIn(f"OMNI_AGENT_KONTO_FELIPE={FAKE_KEY}", inhalt)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN=", inhalt)
+        self.assertIn("DEEPSEEK_API_KEY=abc", inhalt)
+        self.assertEqual(stat.S_IMODE(d.stat().st_mode), 0o600)
+
+    def test_add_ohne_terminal_gibt_anleitung_und_nie_schluessel(self):
+        self._env_schreiben("")
+        erg = self._cli("konto", "add", "fps", "--art", "api")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("Schlüssel fehlt noch", erg.stdout)
+        self.assertIn("OMNI_AGENT_KONTO_FPS", erg.stdout)
+
+    def test_uebernehme_fehlende_zeile_scheitert_sauber(self):
+        self._env_schreiben("DEEPSEEK_API_KEY=abc\n")
+        erg = self._cli("konto", "add", "felipe", "--art", "token", "--uebernehme", "GIBT_ES_NICHT")
+        self.assertEqual(erg.returncode, 2)
+
+    def test_list_und_remove(self):
+        d = self._env_schreiben(f"OMNI_AGENT_KONTO_FPS={FAKE_KEY}\n")
+        self._cli("konto", "add", "fps", "--art", "api")
+        liste = self._cli("konto", "list")
+        self.assertIn("claude-fps", liste.stdout)
+        self.assertIn("gesetzt", liste.stdout)
+        self.assertNotIn(FAKE_KEY, liste.stdout)
+        self._cli("konto", "remove", "fps", "--mit-schluessel")
+        self.assertNotIn("OMNI_AGENT_KONTO_FPS", d.read_text())
+        self.assertIn("Noch kein", self._cli("konto", "list").stdout)
+
+    def test_konto_im_anbieter_befehl_sichtbar(self):
+        self._cli("konto", "add", "fps", "--art", "api")
+        self.assertIn("claude-fps", self._cli("anbieter").stdout)
+
+
 class OpencodeCodex(unittest.TestCase):
     def _ctx(self, anbieter_id, protokoll, werkzeuge):
         a = hole_anbieter(anbieter_id)

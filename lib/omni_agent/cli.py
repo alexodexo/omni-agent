@@ -201,6 +201,45 @@ def cmd_status(args) -> int:
     return 0
 
 
+# ---------- konto ----------
+
+def cmd_konto(args) -> int:
+    from . import konten
+    if args.aktion == "list":
+        alle = konten.liste()
+        if not alle:
+            print("Noch kein benanntes Konto. Anlegen: omni-agent konto add NAME --art api|token")
+            return 0
+        for k in alle:
+            print(f"{k['name']:<14} --anbieter {k['id']:<20} {konten.ARTEN[k['art']][1]:<26} Schlüssel {k['schluessel']}  ({k['env']})")
+        return 0
+    if not args.name:
+        raise KonfigFehler("Bitte einen Kontonamen angeben, z. B.: omni-agent konto add felipe --art token")
+    if args.aktion == "remove":
+        konten.entferne(args.name, args.mit_schluessel)
+        print(f"Konto '{args.name}' entfernt." + (" Schlüsselzeile gelöscht." if args.mit_schluessel else f" Die Zeile {konten.konto_env(args.name)} in der Schlüsseldatei bleibt (--mit-schluessel löscht sie)."))
+        return 0
+    # add
+    pfad = konten.lege_an(args.name, args.art, args.titel, args.ersetzen)
+    env = konten.konto_env(args.name)
+    print(f"Konto '{args.name}' angelegt ({pfad.name}). Aufruf: --anbieter {konten.konto_id(args.name)}")
+    if args.uebernehme:
+        konten.benenne_schluessel_um(args.uebernehme, env)
+        print(f"Schlüssel aus {args.uebernehme} übernommen, jetzt unter {env}.")
+    elif sys.stdin.isatty():
+        import getpass
+        wert = getpass.getpass(f"{konten.ARTEN[args.art][1]} für '{args.name}' (Eingabe unsichtbar, Enter überspringt): ").strip()
+        if wert:
+            konten.setze_schluessel(env, wert)
+            print(f"Schlüssel gespeichert unter {env} (Rechte 600).")
+    if not any(k["name"] == args.name and k["schluessel"] == "gesetzt" for k in konten.liste()):
+        print(f"Schlüssel fehlt noch. In deinem Terminal (nicht im Chat) erneut: omni-agent konto add {args.name} --art {args.art} --ersetzen")
+        print(f"oder in {env_datei()} eine Zeile eintragen:  {env}=dein-schlüssel")
+    if args.art == "token":
+        print("Hinweis: " + konten.HINWEIS_TOKEN)
+    return 0
+
+
 # ---------- anbieter / runner ----------
 
 def cmd_anbieter(args) -> int:
@@ -284,6 +323,15 @@ def baue_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_status)
 
     sub.add_parser("anbieter", help="Anbieter mit Datenort auflisten").set_defaults(fn=cmd_anbieter)
+    s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove")
+    s.add_argument("aktion", choices=["add", "list", "remove"])
+    s.add_argument("name", nargs="?", help="Kontoname, z. B. felipe oder fps")
+    s.add_argument("--art", choices=["api", "token"], default="api", help="api = ANTHROPIC_API_KEY (empfohlen), token = Abo-Token")
+    s.add_argument("--titel", help="Anzeigename, z. B. 'Felipes Konto'")
+    s.add_argument("--uebernehme", metavar="ENV_NAME", help="vorhandene Zeile der Schlüsseldatei unter dem Kontonamen weiterverwenden (z. B. CLAUDE_CODE_OAUTH_TOKEN)")
+    s.add_argument("--ersetzen", action="store_true", help="vorhandenes Konto gleichen Namens überschreiben")
+    s.add_argument("--mit-schluessel", action="store_true", help="bei remove auch die Schlüsselzeile löschen")
+    s.set_defaults(fn=cmd_konto)
     sub.add_parser("runner", help="Runner auflisten").set_defaults(fn=cmd_runner)
 
     s = sub.add_parser("extras", help="Optionale Extras")

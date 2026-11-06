@@ -43,7 +43,11 @@ class ClaudeRunner(Runner):
             env["CLAUDE_CODE_SUBAGENT_MODEL"] = ctx.modell
         else:
             # Anderes Claude-Konto: Schlüssel unter seinem eigenen Namen, kein Base-URL-Eingriff.
-            env.update(ctx.schluessel)
+            if a.konto_art and ctx.schluessel:
+                wert = next(iter(ctx.schluessel.values()))
+                env["CLAUDE_CODE_OAUTH_TOKEN" if a.konto_art == "token" else "ANTHROPIC_API_KEY"] = wert
+            else:
+                env.update(ctx.schluessel)
             env["ANTHROPIC_MODEL"] = ctx.modell
 
         tools = []

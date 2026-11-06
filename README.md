@@ -14,7 +14,7 @@ Claude Code (du)  ──/omni-agent:run──►  omni-agent run
 
 | Schicht | Auswahl | Standard |
 |---|---|---|
-| **Anbieter** | DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, Nvidia, Claude mit anderem Konto | – |
+| **Anbieter** | DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, Nvidia, Beliebig viele benannte Claude-Konten | – |
 | **Runner** | Claude Code, opencode, codex, dsh (experimentell) | Claude Code |
 
 ## Installieren
@@ -67,12 +67,26 @@ Schlüssel liegen in `~/.omni-agent/env` (Zeile `NAME=wert`, Rechte 600) oder in
 | **eurouter** | OpenAI | EU (laut Anbieter) | nein | `EUROUTER_API_KEY` |
 | **nvidia** | OpenAI (nur Chat) | nicht belegt | nein | `NVIDIA_API_KEY` |
 | **claude-konto** | Anthropic | Anthropic | nein | `ANTHROPIC_API_KEY` |
+| **claude-NAME** (eigene Konten) | Anthropic | Anthropic | nein | `OMNI_AGENT_KONTO_NAME` |
 
 „Nein" heißt: nach Herstellerdokumentation eingebaut (Stand 28.10.2026), aber nicht von uns ausprobiert. Für Personenbezug: `ollama` oder `eurouter`. Eigene Anbieter: JSON-Datei in `~/.omni-agent/providers.d/` (gleiches Schema wie [providers.json](providers.json)).
 
-### Claude mit anderem Konto
+### Claude-Konten mit Namen
 
-Empfohlen ist ein **API-Schlüssel** (`ANTHROPIC_API_KEY`). Ein Abo-Token (`CLAUDE_CODE_OAUTH_TOKEN`) für unbeaufsichtigte Läufe ist bei Anthropic nicht ausdrücklich geregelt; ob das erlaubt ist, ist **nicht belegt**. Omni-Agent speichert diesen Token nie, es reicht ihn nur als Umgebungsvariable an das unveränderte `claude` durch. Die Entscheidung liegt bei dir.
+So viele Konten, wie du willst, jedes mit eigenem Namen und eigenem Kontingent:
+
+```bash
+omni-agent konto add felipe --art token --titel "Felipes Konto"   # fragt den Schlüssel unsichtbar ab
+omni-agent konto add fps --art api
+omni-agent konto list
+omni-agent run --anbieter claude-felipe --text "…"                # oder /omni-agent:run claude-fps …
+omni-agent konto remove fps --mit-schluessel
+```
+
+- **Name:** Kleinbuchstaben, Ziffern, Bindestrich. Der Anbieter heißt dann `claude-<name>`, der Schlüssel steht in `~/.omni-agent/env` als `OMNI_AGENT_KONTO_<NAME>` (Rechte 600).
+- **Art:** `api` ist empfohlen (`ANTHROPIC_API_KEY`). Ein Abo-Token (`--art token`, `CLAUDE_CODE_OAUTH_TOKEN`) für unbeaufsichtigte Läufe ist bei Anthropic nicht ausdrücklich geregelt; ob das erlaubt ist, ist **nicht belegt**. Die Entscheidung liegt bei dir.
+- **Schlüssel nie in den Chat.** `konto add` fragt im eigenen Terminal ab, oder du trägst die Zeile selbst in die Datei ein. Eine schon vorhandene Zeile übernimmst du mit `--uebernehme CLAUDE_CODE_OAUTH_TOKEN`.
+- Konten laufen nur mit dem Runner `claude`. Der Anbieter `claude-konto` bleibt als Ein-Konto-Kurzweg (`ANTHROPIC_API_KEY`).
 
 ## Anbieter und Runner passen zusammen
 
@@ -83,7 +97,7 @@ Jeder Anbieter spricht ein Format, jede CLI versteht nur manche.
 | deepseek, openrouter, kimi, ollama | ja | ja | nein |
 | eurouter | nur mit LiteLLM | ja | ja (Responses-Pfad nicht geprüft) |
 | nvidia | nur mit LiteLLM | ja | nein |
-| claude-konto | ja | – | – |
+| claude-konto, claude-NAME | ja | – | – |
 
 `omni-agent run` nimmt ohne `--runner` den ersten **installierten** passenden Runner (claude, opencode, codex). `omni-agent doctor` zeigt die Matrix für deinen Rechner. Passt nichts, sagt es dir, was fehlt.
 

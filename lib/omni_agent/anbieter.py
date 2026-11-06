@@ -22,6 +22,7 @@ class Anbieter:
     key_platzhalter: str | None = None
     alle_stufen: bool = True
     modell_pflicht: bool = False
+    konto_art: str | None = None  # 'api' oder 'token': benanntes Claude-Konto
     litellm: dict = field(default_factory=dict)
 
     @property
@@ -48,6 +49,8 @@ def _aus_dict(d: dict, quelle: str) -> Anbieter:
     unbekannt = [p for p in d["protokolle"] if p not in PROTOKOLLE]
     if unbekannt:
         raise KonfigFehler(f"{quelle}: unbekanntes Protokoll {unbekannt} (erlaubt: {', '.join(PROTOKOLLE)})")
+    if d.get("konto_art") not in (None, "api", "token"):
+        raise KonfigFehler(f"{quelle}: konto_art muss 'api' oder 'token' sein")
     if not d.get("modell_pflicht") and "standard" not in d["modelle"]:
         raise KonfigFehler(f"{quelle}: 'modelle.standard' fehlt (oder 'modell_pflicht': true setzen)")
     return Anbieter(
@@ -64,6 +67,7 @@ def _aus_dict(d: dict, quelle: str) -> Anbieter:
         key_platzhalter=d.get("key_platzhalter"),
         alle_stufen=bool(d.get("alle_stufen", True)),
         modell_pflicht=bool(d.get("modell_pflicht", False)),
+        konto_art=d.get("konto_art"),
         litellm=dict(d.get("litellm", {})),
     )
 
