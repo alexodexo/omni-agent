@@ -14,7 +14,7 @@ Claude Code (du)  ──/omni-agent:run──►  omni-agent run
 
 | Schicht | Auswahl | Standard |
 |---|---|---|
-| **Anbieter** | DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, Nvidia, Beliebig viele benannte Claude-Konten | – |
+| **Anbieter** | DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, Nvidia, Codex (OpenAI-Anmeldung), beliebig viele benannte Claude-Konten | – |
 | **Runner** | Claude Code, opencode, codex, dsh (experimentell) | Claude Code |
 
 ## Installieren
@@ -38,6 +38,7 @@ Claude Code (du)  ──/omni-agent:run──►  omni-agent run
 | `/omni-agent:setup [anbieter]` | Einrichtung, Anleitung für einen Anbieter |
 | `/omni-agent:doctor` | Was ist da, was fehlt |
 | `/omni-agent:run deepseek <auftrag>` | Auftrag im Hintergrund ausführen |
+| `/omni-agent:review [konto] [--base main]` | Git-Änderungen von einem anderen Modell prüfen lassen |
 | `/omni-agent:status` | Läufe und Berichte ansehen |
 
 Dazu kennt Claude die Skill `delegieren`: Sie schlägt von selbst einen Hintergrundlauf vor, wenn eine Teilaufgabe sich dafür eignet. Gestartet wird nie ohne dein Ja.
@@ -48,7 +49,15 @@ Im Terminal:
 omni-agent run --anbieter deepseek --text "Vergleiche drei Methoden zur Qualitätssicherung von Unterricht"
 omni-agent run --anbieter nvidia --runner opencode auftrag.md
 omni-agent status
+omni-agent result                         # Bericht des letzten Laufs
+omni-agent run --fortsetzen --text "Und wie sieht es bei X aus?"   # Nachfrage an denselben Agenten
+omni-agent cancel                         # laufenden Lauf abbrechen
+omni-agent review --konto fbs --base main --adversarial   # Zweitmeinung zu den Änderungen im Repo
 ```
+
+**Review:** `omni-agent review` schickt den Git-Diff (alle Änderungen gegen HEAD oder `--base main`) an ein anderes Modell oder Konto und liefert Befunde nach Schwere mit Datei und Zeile. `--adversarial` stellt zusätzlich die gewählte Lösung infrage, ein freier Text danach legt den Schwerpunkt fest. Der Diff verlässt den Rechner: `--vorschau` zeigt vorher, was gesendet würde. Enthält der Diff mögliche Geheimnisse oder `.env`-Dateien, wird **nichts** gesendet (nur `--trotzdem` überstimmt das). Lock-Dateien und Dateien über 400 KB Diff werden ausgenommen. Der Reviewer ändert nichts am Code; Befunde sind Hinweise, keine Wahrheit.
+
+**Nachfragen:** `--fortsetzen` setzt den Lauf mit demselben Agentenverlauf fort (Claude und Codex), im selben Ordner; `bericht.md` wird aktualisiert. Anbieter und Runner bleiben die des Laufs.
 
 ## Schlüssel: nie im Chat
 
@@ -67,9 +76,19 @@ Schlüssel liegen in `~/.omni-agent/env` (Zeile `NAME=wert`, Rechte 600) oder in
 | **eurouter** | OpenAI | EU (laut Anbieter) | nein | `EUROUTER_API_KEY` |
 | **nvidia** | OpenAI (nur Chat) | nicht belegt | nein | `NVIDIA_API_KEY` |
 | **claude-konto** | Anthropic | Anthropic | nein | `ANTHROPIC_API_KEY` |
+| **codex** (OpenAI-Anmeldung) | OpenAI | OpenAI | ja | keiner: `codex login` |
 | **claude-NAME** (eigene Konten) | Anthropic | Anthropic | nein | `OMNI_AGENT_KONTO_NAME` |
 
 „Nein" heißt: nach Herstellerdokumentation eingebaut (Stand 28.10.2026), aber nicht von uns ausprobiert. Für Personenbezug: `ollama` oder `eurouter`. Eigene Anbieter: JSON-Datei in `~/.omni-agent/providers.d/` (gleiches Schema wie [providers.json](providers.json)).
+
+### Codex (OpenAI)
+
+`--anbieter codex` nutzt **die Anmeldung der Codex-CLI selbst**, also dein ChatGPT-Konto oder deinen OpenAI-Schlüssel aus `codex login`. Omni-Agent speichert dafür nichts. Voraussetzung: `codex` ist installiert und angemeldet; `omni-agent doctor` zeigt „angemeldet". Findet es `codex` nicht im PATH, sucht es in der ChatGPT-App (`/Applications/ChatGPT.app/…/codex-cli`); mit `OMNI_AGENT_CODEX=/Pfad/zu/codex` legst du den Ort selbst fest.
+
+- Es gelten **nur** die Anmeldung, nicht deine persönliche `config.toml` und deine Regeln (`--ignore-user-config --ignore-rules`). Modell und Aufwand gibst du an: `--modell klein|standard|stark` oder ein Modellname, `--aufwand low|medium|high`.
+- Codex läuft in seinem Sandkasten (`workspace-write`): schreiben nur im Laufordner, kein Netz für Shell-Befehle. Seine Shell ist deshalb immer da und steht in der Werkzeugzeile.
+- Dein Codex-Kontingent zählt mit. Mit `luna` (`--modell klein`) und `--aufwand low` bleibt es billig.
+- Codex mit einem **Fremdanbieter** (z. B. EUrouter über die Responses-API) ist gebaut, aber nicht live geprüft.
 
 ### Claude-Konten mit Namen
 
@@ -100,10 +119,11 @@ Jeder Anbieter spricht ein Format, jede CLI versteht nur manche.
 | eurouter | nur mit LiteLLM | ja | ja (Responses-Pfad nicht geprüft) |
 | nvidia | nur mit LiteLLM | ja | nein |
 | claude-konto, claude-NAME | ja | – | – |
+| codex (Anmeldung) | – | – | ja |
 
 `omni-agent run` nimmt ohne `--runner` den ersten **installierten** passenden Runner (claude, opencode, codex). `omni-agent doctor` zeigt die Matrix für deinen Rechner. Passt nichts, sagt es dir, was fehlt.
 
-**Runner-Stand:** `claude` ist live getestet. `opencode` und `codex` sind nach Herstellerdokumentation gebaut, aber nicht ausprobiert. `dsh` (DeepSeek Harness) ist eine Developer Preview und läuft nur, wenn du `--runner dsh` ausdrücklich nennst.
+**Runner-Stand:** `claude` und `codex` (mit Anmeldung) sind live getestet. `opencode` und Codex mit Fremdanbieter sind nach Herstellerdokumentation gebaut, aber nicht ausprobiert. `dsh` (DeepSeek Harness) ist eine Developer Preview und läuft nur, wenn du `--runner dsh` ausdrücklich nennst.
 
 ### Optional: LiteLLM als Übersetzer
 
@@ -115,7 +135,9 @@ Nur nötig, wenn Claude Code gegen einen reinen OpenAI-Anbieter laufen soll. Mei
 |---|---|
 | Saubere Umgebung (`env -i` plus Nötigstes) | Dein Login und deine Base-URL rutschen nicht in den Fremdagenten |
 | Nur der eine benötigte Schlüssel | Kein anderer Anbieter-Schlüssel erreicht den Lauf |
-| Claude-Runner: `--setting-sources project`, `--strict-mcp-config`, `--no-session-persistence`, `dontAsk`, leerer Arbeitsordner | Keine fremden Hooks, MCP-Server oder Sitzungen |
+| Claude-Runner: `--setting-sources project`, `--strict-mcp-config`, `dontAsk`, leerer Arbeitsordner. Die Sitzung wird gespeichert (für `--fortsetzen`) und enthält den Auftrag, nie Schlüssel | Keine fremden Hooks oder MCP-Server |
+| Codex-Runner: `--ignore-user-config --ignore-rules`, Sandbox `workspace-write` | Deine Codex-Einstellungen und Regeln wirken nicht; Schreiben nur im Laufordner |
+| Review: Sperre bei Geheimnissen und `.env` im Diff, Vorschau, Größengrenze, nur Lesen und Schreiben | Es geht nichts raus, was du nicht gesehen hast |
 | Standard **ohne Shell** | Websuche kann Fremdtext liefern, der den Agenten lenkt. `--werkzeuge +shell` nur bewusst |
 | Schlüssel werden in `log.jsonl` und `fehler.log` geschwärzt | Kein Schlüssel im Log |
 | Zeitlimit (900 s) und Rundenobergrenze | Ein hängender Lauf wird samt Kindprozessen beendet |

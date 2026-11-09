@@ -59,8 +59,10 @@ class ClaudeRunner(Runner):
             "--output-format", "stream-json", "--verbose",
             "--strict-mcp-config", "--setting-sources", "project",
             "--permission-mode", "dontAsk",
-            "--no-session-persistence",
         ]
+        sitzung = ctx.extra.get("fortsetzen")
+        if sitzung:
+            argv += ["--resume", sitzung]
         if tools:
             argv += ["--allowed-tools", *tools]
         return Befehl(argv=argv, env=env)
@@ -73,6 +75,8 @@ class ClaudeRunner(Runner):
         typ = o.get("type")
         aus = []
         if typ == "system" and o.get("subtype") == "init":
+            if o.get("session_id"):
+                zustand["sitzung"] = o["session_id"]
             aus.append(f"Start, Modell: {o.get('model')}")
         elif typ == "assistant":
             for c in (o.get("message") or {}).get("content") or []:

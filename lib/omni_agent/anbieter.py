@@ -22,12 +22,20 @@ class Anbieter:
     key_platzhalter: str | None = None
     alle_stufen: bool = True
     modell_pflicht: bool = False
-    konto_art: str | None = None  # 'api' oder 'token': benanntes Claude-Konto
+    konto_art: str | None = None  # 'api'/'token' (Claude-Konto) oder 'login' (Anmeldung der Agent-CLI selbst)
+    nur_runner: str | None = None  # Anbieter ohne Adresse läuft nur über genau diesen Runner
     litellm: dict = field(default_factory=dict)
 
     @property
     def lokal(self) -> bool:
         return bool(self.base_url) and ("localhost" in self.base_url or "127.0.0.1" in self.base_url)
+
+    @property
+    def runner_zwang(self) -> str | None:
+        """Runner, über den dieser Anbieter allein laufen kann (Konten ohne Adresse); sonst None."""
+        if self.nur_runner:
+            return self.nur_runner
+        return "claude" if self.base_url is None else None
 
     @property
     def braucht_schluessel(self) -> bool:
@@ -49,8 +57,8 @@ def _aus_dict(d: dict, quelle: str) -> Anbieter:
     unbekannt = [p for p in d["protokolle"] if p not in PROTOKOLLE]
     if unbekannt:
         raise KonfigFehler(f"{quelle}: unbekanntes Protokoll {unbekannt} (erlaubt: {', '.join(PROTOKOLLE)})")
-    if d.get("konto_art") not in (None, "api", "token"):
-        raise KonfigFehler(f"{quelle}: konto_art muss 'api' oder 'token' sein")
+    if d.get("konto_art") not in (None, "api", "token", "login"):
+        raise KonfigFehler(f"{quelle}: konto_art muss 'api', 'token' oder 'login' sein")
     if not d.get("modell_pflicht") and "standard" not in d["modelle"]:
         raise KonfigFehler(f"{quelle}: 'modelle.standard' fehlt (oder 'modell_pflicht': true setzen)")
     return Anbieter(
@@ -68,6 +76,7 @@ def _aus_dict(d: dict, quelle: str) -> Anbieter:
         alle_stufen=bool(d.get("alle_stufen", True)),
         modell_pflicht=bool(d.get("modell_pflicht", False)),
         konto_art=d.get("konto_art"),
+        nur_runner=d.get("nur_runner"),
         litellm=dict(d.get("litellm", {})),
     )
 

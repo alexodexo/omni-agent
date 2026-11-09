@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import textwrap
 import unittest
 from pathlib import Path
@@ -120,12 +121,15 @@ class Werkzeuge(unittest.TestCase):
         with self.assertRaises(KonfigFehler):
             loese_werkzeuge("zaubern", RUNNER["claude"])
 
-    def test_codex_verlangt_shell_ausdruecklich(self):
+    def test_runner_ohne_sandbox_verlangt_shell_ausdruecklich(self):
         with self.assertRaises(KonfigFehler) as ctx:
-            loese_werkzeuge(None, RUNNER["codex"])
+            loese_werkzeuge(None, RUNNER["dsh"])
         self.assertIn("+shell", str(ctx.exception))
-        w = loese_werkzeuge("+shell", RUNNER["codex"])
-        self.assertIn("shell", w)
+        self.assertIn("shell", loese_werkzeuge("+shell", RUNNER["dsh"]))
+
+    def test_codex_shell_laeuft_in_der_sandbox_und_ist_sichtbar(self):
+        w = loese_werkzeuge(None, RUNNER["codex"])
+        self.assertIn("shell", w)  # immer da, aber nur im Sandkasten (Schreiben im Ordner, kein Netz)
         self.assertNotIn("web_suche", w)  # Standard schrumpft still, weil nicht verlangt
 
     def test_verlangtes_unmoegliches_wird_verweigert(self):
@@ -182,11 +186,12 @@ class ClaudeBefehl(unittest.TestCase):
 
     def test_flags(self):
         argv = RUNNER["claude"].baue(self._ctx()).argv
-        for flag in ("--strict-mcp-config", "--no-session-persistence", "--allowed-tools"):
+        for flag in ("--strict-mcp-config", "--allowed-tools"):
             self.assertIn(flag, argv)
         self.assertEqual(argv[argv.index("--setting-sources") + 1], "project")
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "dontAsk")
         self.assertNotIn("Bash", argv)
+        self.assertNotIn("--no-session-persistence", argv)  # Sitzung bleibt, damit --fortsetzen geht
 
     def test_shell_nur_wenn_verlangt(self):
         argv = RUNNER["claude"].baue(self._ctx(werkzeuge=("lesen", "shell"))).argv
@@ -397,6 +402,47 @@ class OpencodeCodex(unittest.TestCase):
         self.assertNotIn(FAKE_KEY, " ".join(b.argv))
 
 
+class CodexUndFortsetzen(unittest.TestCase):
+    def _ctx(self, anbieter_id, **extra):
+        a = hole_anbieter(anbieter_id)
+        return LaufKontext(prompt="p", ordner=Path("/tmp/x"), anbieter=a, modell="gpt-x", base_url=a.base_url,
+                           protokoll="openai-responses", schluessel={}, werkzeuge=("lesen", "schreiben", "shell"),
+                           max_runden=5, extra=extra)
+
+    def test_codex_anmeldung_nutzt_nur_login_nicht_die_nutzerkonfiguration(self):
+        b = RUNNER["codex"].baue(self._ctx("codex", aufwand="low"))
+        self.assertIn("--ignore-user-config", b.argv)
+        self.assertIn("--ignore-rules", b.argv)
+        self.assertEqual(b.argv[b.argv.index("--model") + 1], "gpt-x")
+        self.assertIn('model_reasoning_effort="low"', b.argv)
+        self.assertFalse(any("model_provider" in x for x in b.argv))
+        self.assertNotIn("OPENAI_API_KEY", b.env)
+
+    def test_anbieter_codex_laeuft_nur_ueber_codex(self):
+        a = hole_anbieter("codex")
+        self.assertTrue(passt(a, RUNNER["codex"]))
+        self.assertFalse(passt(a, RUNNER["claude"]))
+        self.assertFalse(passt(hole_anbieter("claude-konto"), RUNNER["codex"]))
+
+    def test_codex_fortsetzen_nutzt_resume(self):
+        b = RUNNER["codex"].baue(self._ctx("codex", fortsetzen="thread-1"))
+        self.assertEqual(b.argv[1:3], ["exec", "resume"])
+        self.assertIn("thread-1", b.argv)
+        self.assertNotIn("--cd", b.argv)
+
+    def test_codex_merkt_sich_die_sitzung(self):
+        z = {}
+        RUNNER["codex"].fortschritt(json.dumps({"type": "thread.started", "thread_id": "t-9"}), z)
+        self.assertEqual(z["sitzung"], "t-9")
+
+    def test_claude_fortsetzen_nutzt_resume(self):
+        a = hole_anbieter("claude-konto")
+        ctx = LaufKontext(prompt="p", ordner=Path("/tmp/x"), anbieter=a, modell="sonnet", base_url=None, protokoll="anthropic",
+                          schluessel={"ANTHROPIC_API_KEY": FAKE_KEY}, werkzeuge=("lesen",), max_runden=5, extra={"fortsetzen": "sess-7"})
+        argv = RUNNER["claude"].baue(ctx).argv
+        self.assertEqual(argv[argv.index("--resume") + 1], "sess-7")
+
+
 class Plugin(unittest.TestCase):
     def test_version_in_plugin_json_gleich_kern(self):
         from omni_agent import VERSION
@@ -441,14 +487,16 @@ FAKE_CLAUDE = textwrap.dedent("""\
     modus = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "modus")).read().strip()
     if "--version" in sys.argv:
         print("0.0.0 (Fake)"); sys.exit(0)
-    print(json.dumps({"type": "system", "subtype": "init", "model": os.environ.get("ANTHROPIC_MODEL")}), flush=True)
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "argv.log"), "a") as f:
+        f.write(json.dumps(sys.argv[1:]) + "\\n")
+    print(json.dumps({"type": "system", "subtype": "init", "model": os.environ.get("ANTHROPIC_MODEL"), "session_id": "sess-1"}), flush=True)
     print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "WebSearch", "input": {"query": "test"}}]}}), flush=True)
     print("Zeile mit Geheimnis: " + os.environ.get("ANTHROPIC_AUTH_TOKEN", ""), flush=True)
     sys.stderr.write("stderr mit Geheimnis: " + os.environ.get("ANTHROPIC_AUTH_TOKEN", "") + "\\n")
     if modus == "haengt":
         time.sleep(60)
     if modus == "ok":
-        open("bericht.md", "w").write("# Bericht\\nFertig\\n")
+        open("bericht.md", "w").write("# Bericht\\nFertig\\n" + sys.argv[2][-80:] + "\\n")
     print(json.dumps({"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 10, "total_cost_usd": 0, "result": "ok"}), flush=True)
 """)
 
@@ -524,6 +572,158 @@ class EndeZuEnde(MitHome):
         ]))
         erg = self.lauf("run", "--text", "x", "--anbieter", "tot", "--runner", "claude")
         self.assertEqual(erg.returncode, 3, erg.stderr)
+
+    def test_fortsetzen_nutzt_gleiche_sitzung_und_aktualisiert_bericht(self):
+        self.lauf("run", "--text", "Erstauftrag", "--anbieter", "deepseek")
+        ordner = self.letzter_lauf()
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["sitzung"], "sess-1")
+        erg = self.lauf("run", "--fortsetzen", "--text", "Nachfrage eins")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertEqual(len(list((self.home / "laeufe").iterdir())), 1)  # gleicher Ordner, kein neuer
+        aufrufe = [json.loads(z) for z in (self.bin / "argv.log").read_text().splitlines()]
+        self.assertEqual(aufrufe[1][aufrufe[1].index("--resume") + 1], "sess-1")
+        self.assertNotIn("--resume", aufrufe[0])
+        self.assertIn("Nachfrage eins", (ordner / "auftrag.md").read_text())
+        status = json.loads((ordner / "status.json").read_text())
+        self.assertEqual((status["zustand"], status["nachfragen"], status["anbieter"]), ("fertig", 1, "deepseek"))
+
+    def test_fortsetzen_mit_altem_bericht_zaehlt_nicht_als_fertig(self):
+        self.lauf("run", "--text", "Erstauftrag", "--anbieter", "deepseek")
+        ordner = self.letzter_lauf()
+        os.utime(ordner / "bericht.md", (1_000_000, 1_000_000))
+        erg = self.lauf("run", "--fortsetzen", "--text", "Nachfrage", modus="ohne")
+        self.assertEqual(erg.returncode, 1)
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "fehler")
+
+    def test_fortsetzen_ohne_nachfrage_oder_sitzung_scheitert_sauber(self):
+        self.lauf("run", "--text", "x", "--anbieter", "deepseek")
+        self.assertEqual(self.lauf("run", "--fortsetzen").returncode, 2)
+        ordner = self.letzter_lauf()
+        status = json.loads((ordner / "status.json").read_text())
+        status.pop("sitzung")
+        (ordner / "status.json").write_text(json.dumps(status))
+        self.assertEqual(self.lauf("run", "--fortsetzen", "--text", "y").returncode, 2)
+
+    def test_fortsetzen_anderer_anbieter_wird_verweigert(self):
+        self.lauf("run", "--text", "x", "--anbieter", "deepseek")
+        self.assertEqual(self.lauf("run", "--fortsetzen", "--anbieter", "kimi", "--text", "y").returncode, 2)
+
+    def test_result_zeigt_bericht_und_pfad(self):
+        self.lauf("run", "--text", "Ergebnisfrage", "--anbieter", "deepseek")
+        erg = self.lauf("result")
+        self.assertIn("# Bericht", erg.stdout)
+        self.assertIn("--fortsetzen", erg.stdout)
+        self.assertTrue(self.lauf("result", "--pfad").stdout.strip().endswith("bericht.md"))
+
+    def test_result_ohne_laeufe_scheitert_klar(self):
+        self.assertEqual(self.lauf("result").returncode, 2)
+
+    def test_cancel_bricht_laufenden_lauf_ab(self):
+        (self.bin / "modus").write_text("haengt")
+        proc = subprocess.Popen([sys.executable, str(BIN), "run", "--text", "x", "--anbieter", "deepseek", "--zeit", "60"],
+                                env=dict(self.env), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(60):
+                time.sleep(0.25)
+                laeufe = list((self.home / "laeufe").iterdir()) if (self.home / "laeufe").exists() else []
+                if laeufe and (laeufe[0] / "log.jsonl").exists() and (laeufe[0] / "log.jsonl").stat().st_size > 0:
+                    break  # der Runner läuft und hängt
+            erg = subprocess.run([sys.executable, str(BIN), "cancel"], env=dict(self.env), capture_output=True, text=True, timeout=60)
+            self.assertEqual(erg.returncode, 0, erg.stderr)
+            self.assertIn("abgebrochen", erg.stdout)
+            proc.wait(timeout=20)
+            self.assertEqual(json.loads((self.letzter_lauf() / "status.json").read_text())["zustand"], "abgebrochen")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_cancel_ohne_laufenden_lauf(self):
+        self.assertIn("Kein Lauf arbeitet", self.lauf("cancel").stdout)
+
+    def test_cancel_raeumt_toten_lauf_auf(self):
+        ordner = self.home / "laeufe" / "20260101-000000-tot"
+        ordner.mkdir(parents=True)
+        (ordner / "status.json").write_text(json.dumps({"zustand": "arbeitet", "pid": 999999, "lauf": str(ordner)}))
+        self.assertIn("schon weg", self.lauf("cancel").stdout)
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "fehler")
+
+    # ---- review ----
+    def _repo(self, inhalt="a = 1\n"):
+        repo = Path(self.tmp.name) / "repo"
+        repo.mkdir()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", ".")
+        (repo / "m.py").write_text(inhalt)
+        git("add", ".")
+        git("commit", "-qm", "init")
+        return repo, git
+
+    def _review(self, repo, *args, modus="ok"):
+        (self.bin / "modus").write_text(modus)
+        return subprocess.run([sys.executable, str(BIN), "review", *args], env=dict(self.env), cwd=repo,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_review_gibt_diff_als_material_und_nur_lesen_schreiben(self):
+        repo, _ = self._repo()
+        (repo / "m.py").write_text("a = 2\n")
+        erg = self._review(repo, "--anbieter", "deepseek", "--adversarial", "Rechte prüfen")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        ordner = self.letzter_lauf()
+        self.assertIn("+a = 2", (ordner / "aenderungen.patch").read_text())
+        self.assertIn("M\tm.py", (ordner / "geaenderte_dateien.txt").read_text())
+        auftrag = (ordner / "auftrag.md").read_text()
+        self.assertIn("gegnerisch", auftrag)
+        self.assertIn("Rechte prüfen", auftrag)
+        self.assertIn("lesen, schreiben", erg.stdout)
+        self.assertNotIn("shell", erg.stdout.split("Werkzeuge:")[1].splitlines()[0])
+
+    def test_review_vorschau_sendet_nichts(self):
+        repo, _ = self._repo()
+        (repo / "m.py").write_text("a = 2\n")
+        erg = self._review(repo, "--anbieter", "deepseek", "--vorschau")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("nichts gesendet", erg.stdout)
+        self.assertFalse((self.home / "laeufe").exists())
+
+    def test_review_ohne_aenderungen(self):
+        repo, _ = self._repo()
+        erg = self._review(repo, "--anbieter", "deepseek")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("Keine Änderungen", erg.stderr)
+
+    def test_review_sperrt_diff_mit_geheimnis(self):
+        repo, git = self._repo()
+        (repo / "k.py").write_text('API_KEY = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"\n')
+        git("add", "-N", "k.py")
+        erg = self._review(repo, "--anbieter", "deepseek")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("Geheimnisse", erg.stderr)
+        self.assertNotIn("sk-ant-api03-abcdefghij", erg.stdout + erg.stderr)
+        self.assertFalse((self.home / "laeufe").exists())
+        self.assertEqual(self._review(repo, "--anbieter", "deepseek", "--trotzdem").returncode, 0)
+
+    def test_review_sperrt_env_datei(self):
+        repo, git = self._repo()
+        (repo / ".env").write_text("A=1\n")
+        git("add", "-N", ".env")
+        self.assertEqual(self._review(repo, "--anbieter", "deepseek").returncode, 2)
+
+    def test_review_base_vergleicht_mit_branch(self):
+        repo, git = self._repo()
+        git("checkout", "-q", "-b", "feature")
+        (repo / "m.py").write_text("a = 3\n")
+        git("commit", "-qam", "aenderung")
+        erg = self._review(repo, "--anbieter", "deepseek", "--base", "master") if self._hat_master(repo) else self._review(repo, "--anbieter", "deepseek", "--base", "main")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("+a = 3", (self.letzter_lauf() / "aenderungen.patch").read_text())
+
+    def _hat_master(self, repo):
+        return b"master" in subprocess.run(["git", "branch"], cwd=repo, capture_output=True).stdout
+
+    def test_review_zu_grosser_diff(self):
+        from omni_agent import review
+        with self.assertRaises(KonfigFehler):
+            review.pruefe({"diff": "+x\n" * (review.MAX_ZEICHEN // 2), "namen": "M\tm.py", "neu": [], "ziel": "t"}, False)
 
     def test_status_befehl(self):
         self.lauf("run", "--text", "x", "--anbieter", "deepseek")

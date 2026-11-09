@@ -131,6 +131,26 @@
       "region": "Anthropic",
       "geprueft": false,
       "hinweis": "Anderes Konto heißt eigene Kontingente. Empfohlen ist ein API-Schlüssel (ANTHROPIC_API_KEY). Ob ein unbeaufsichtigter Lauf mit einem Abo-Token (CLAUDE_CODE_OAUTH_TOKEN) nach Anthropics Bedingungen zulässig ist, ist nicht belegt. Omni-Agent speichert diesen Token nie."
+    },
+    {
+      "id": "codex",
+      "name": "OpenAI über Codex-Anmeldung",
+      "protokolle": [
+        "openai-responses"
+      ],
+      "base_url": null,
+      "key_envs": [],
+      "konto_art": "login",
+      "nur_runner": "codex",
+      "modelle": {
+        "standard": "gpt-6.1-sol",
+        "klein": "gpt-5.6-luna",
+        "stark": "gpt-6.1-sol"
+      },
+      "alle_stufen": false,
+      "region": "OpenAI",
+      "geprueft": true,
+      "hinweis": "Nutzt die Anmeldung der Codex-CLI selbst (codex login, ChatGPT-Konto oder API-Schlüssel), kein Schlüssel in Omni-Agent. Verbraucht das Kontingent dieses Kontos. Modelle: siehe ~/.codex/models_cache.json oder --modell frei."
     }
   ]
 }

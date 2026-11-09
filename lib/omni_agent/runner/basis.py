@@ -58,6 +58,7 @@ class Runner:
     protokolle: tuple = ()
     kann: frozenset = frozenset()            # welche neutralen Werkzeuge er steuern kann
     nicht_verbietbar: frozenset = frozenset()  # Werkzeuge, die er immer hat
+    in_sandbox: bool = False                 # nicht verbietbare Werkzeuge laufen in einer Betriebssystem-Sandbox (Schreiben nur im Ordner, kein Netz)
     experimentell = False
     hinweis = ""
 

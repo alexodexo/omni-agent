@@ -26,8 +26,11 @@ def wirksames_protokoll(anbieter, runner: Runner, ueber_litellm: bool) -> str | 
 def passt(anbieter, runner: Runner, ueber_litellm: bool = False) -> bool:
     if runner.name == "dsh" and anbieter.id != "deepseek":
         return False
-    if anbieter.base_url is None and runner.name != "claude":
-        return False  # Claude-Konto läuft nur über Claude Code selbst
+    zwang = anbieter.runner_zwang
+    if zwang and runner.name != zwang:
+        return False  # Konten ohne Adresse laufen nur über ihre eigene Agent-CLI
+    if zwang and zwang == runner.name:
+        return True
     return wirksames_protokoll(anbieter, runner, ueber_litellm) is not None
 
 
@@ -58,8 +61,9 @@ def waehle_runner(anbieter, wunsch: str | None, ueber_litellm: bool = False) -> 
 def erklaere_unpassend(anbieter, runner: Runner, ueber_litellm: bool) -> str:
     if runner.name == "dsh" and anbieter.id != "deepseek":
         return "Runner 'dsh' ist nur für den Anbieter 'deepseek' gedacht."
-    if anbieter.base_url is None and runner.name != "claude":
-        return f"Anbieter '{anbieter.id}' (anderes Claude-Konto) läuft nur über den Runner 'claude'."
+    zwang = anbieter.runner_zwang
+    if zwang and runner.name != zwang:
+        return f"Anbieter '{anbieter.id}' (Konto der Agent-CLI) läuft nur über den Runner '{zwang}'."
     sprichst = ", ".join(anbieter.protokolle)
     text = f"Anbieter '{anbieter.id}' spricht {sprichst}, Runner '{runner.name}' spricht {', '.join(runner.protokolle)}."
     if "openai-chat" in anbieter.protokolle and runner.spricht("anthropic") and not ueber_litellm:
@@ -108,6 +112,9 @@ def loese_werkzeuge(wunsch: str | None, runner: Runner) -> tuple:
     aktuell -= fehlt  # nur Standard-Werkzeuge schrumpfen, ohne dass es jemand verlangt hat
 
     unverboten = runner.nicht_verbietbar - aktuell
+    if unverboten and runner.in_sandbox:
+        aktuell |= unverboten  # läuft in der Sandbox des Runners; die Werkzeugzeile des Laufs zeigt es offen
+        unverboten = set()
     if unverboten:
         raise KonfigFehler(
             f"Runner '{runner.name}' hat {', '.join(sorted(unverboten))} immer. "

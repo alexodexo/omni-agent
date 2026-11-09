@@ -152,7 +152,7 @@ Bevorzugt wird immer: **anderer Runner statt Übersetzer** (EUrouter und Nvidia 
 | Thema | Regel |
 |---|---|
 | Schlüssel | Nie im Repo, nie im Chat, nie im Log. Datei `~/.omni-agent/env` mit Rechten 600 (Kern verweigert sonst). Der Kern reicht dem Runner **nur den einen** benötigten Schlüssel |
-| Umgebung | `env -i` plus Nötigstes. Bei `claude`: `ANTHROPIC_API_KEY` leer, `--setting-sources project`, `--strict-mcp-config`, `--no-session-persistence`, leerer Laufordner. Ohne das führt `-p` Hooks und MCP des Arbeitsordners aus |
+| Umgebung | `env -i` plus Nötigstes. Bei `claude`: `ANTHROPIC_API_KEY` leer, `--setting-sources project`, `--strict-mcp-config`, leerer Laufordner (Sitzung wird seit 0.4.0 gespeichert, damit `--fortsetzen` geht). Ohne das führt `-p` Hooks und MCP des Arbeitsordners aus |
 | Alle Modell-Variablen | `ANTHROPIC_MODEL`, Opus/Sonnet/Haiku, `CLAUDE_CODE_SUBAGENT_MODEL` setzen, sonst scheitern Hintergrundstufen still |
 | Standard ohne Shell | `shell` nur ausdrücklich (`--werkzeuge +shell`) mit Warnung. Websuche kann Prompt-Injection liefern; ein Agent mit Shell und fremden Webinhalten ist eine Einladung |
 | Datenschutz | README nennt den Datenort je Anbieter. **DeepSeek: China.** Keine Teilnehmerdaten oder Interna in Aufträge. Für Personenbezug: ollama (lokal) oder eurouter |
