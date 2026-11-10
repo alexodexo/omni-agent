@@ -1,28 +1,28 @@
-"""Runner `dsh`: DeepSeek Harness (`@deepseek-ai/dsh`). EXPERIMENTELL, wird nie automatisch gewählt.
+"""Runner `dsh`: DeepSeek Harness (`@deepseek-ai/dsh`). EXPERIMENTAL, never picked automatically.
 
-Die Developer Preview (0.1.x, mit angekündigten Brüchen) ist per `dsh --profile headless "<Aufgabe>"` aufrufbar.
-Wie das Profil seinen Schlüssel liest, ist nicht dokumentiert; Omni-Agent reicht DEEPSEEK_API_KEY durch und
-verlässt sich auf bericht.md als einzigen Fertig-Beweis.
+The developer preview (0.1.x, with announced breaking changes) can be called as `dsh --profile headless "<task>"`.
+How the profile reads its key is not documented; Omni-Agent passes DEEPSEEK_API_KEY through and
+relies on report.md as the only proof of completion.
 """
 from __future__ import annotations
 
-from .basis import Befehl, LaufKontext, Runner, grundumgebung, kurz
+from .base import Command, RunContext, Runner, base_env, shorten
 
 
 class DshRunner(Runner):
     name = "dsh"
     binary = "dsh"
-    protokolle = ("anthropic", "openai-chat")
-    kann = frozenset({"lesen", "schreiben", "shell"})
-    nicht_verbietbar = frozenset({"shell"})
-    experimentell = True
-    hinweis = "EXPERIMENTELL (Developer Preview). Nur nach ausdrücklicher Wahl mit --runner dsh. Nur DeepSeek-Anbieter."
+    protocols = ("anthropic", "openai-chat")
+    can = frozenset({"read", "write", "shell"})
+    cannot_forbid = frozenset({"shell"})
+    experimental = True
+    note = "EXPERIMENTAL (developer preview). Only on explicit choice with --runner dsh. DeepSeek provider only."
 
-    def baue(self, ctx: LaufKontext) -> Befehl:
-        env = grundumgebung()
-        env.update(ctx.schluessel)
-        argv = [self.pfad() or self.binary, "--profile", "headless", ctx.prompt]
-        return Befehl(argv=argv, env=env)
+    def build(self, ctx: RunContext) -> Command:
+        env = base_env()
+        env.update(ctx.key_values)
+        argv = [self.file_path() or self.binary, "--profile", "headless", ctx.prompt]
+        return Command(argv=argv, env=env)
 
-    def fortschritt(self, zeile: str, zustand: dict) -> list:
-        return [kurz(zeile, 160)] if zeile.strip() else []
+    def progress(self, line: str, state: dict) -> list:
+        return [shorten(line, 160)] if line.strip() else []

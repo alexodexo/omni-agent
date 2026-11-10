@@ -1,4 +1,4 @@
-"""Code-Review durch ein anderes Modell: Git-Diff sammeln, prüfen, als Material in einen Lauf geben."""
+"""Code review by another model: collect the git diff, check it, hand it to a run as files."""
 from __future__ import annotations
 
 import argparse
@@ -7,162 +7,166 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .konfig import KonfigFehler
+from .config import ConfigError
 
-MAX_ZEICHEN = 400_000
-AUSGENOMMEN = [":(exclude)*.lock", ":(exclude)package-lock.json", ":(exclude)pnpm-lock.yaml", ":(exclude)*.min.js", ":(exclude)*.map"]
-# Grobe Warnschwelle, kein Schutz: findet die häufigsten Schlüsselformen im Diff
-GEHEIMNIS_MUSTER = re.compile(
+MAX_CHARS = 400_000
+EXCLUDED = [":(exclude)*.lock", ":(exclude)package-lock.json", ":(exclude)pnpm-lock.yaml", ":(exclude)*.min.js", ":(exclude)*.map"]
+# Rough warning threshold, not protection: finds the most common key shapes in the diff
+SECRET_PATTERNS = re.compile(
     r"(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
     r"|(?i:api[_-]?key|secret|token|passwor[dt])\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+]{24,})"
 )
 
-AUFTRAG = """Prüfe die Codeänderungen in der Datei aenderungen.patch (Git-Diff). Die Liste der geänderten Dateien steht in geaenderte_dateien.txt.
+REVIEW_TASK = """Review the code changes in the file changes.patch (git diff). The list of changed files is in changed_files.txt.
 
-<ziel>
-{ziel}
-</ziel>
+<goal>
+{scope}
+</goal>
 
-<befundlatte>
-Melde nur wesentliche Befunde: Fehler, Datenverlust, Sicherheitslücken, falsche Rechte, Fehlverhalten unter Last oder bei Teilfehlern. Keine Stilfragen, keine Namensfragen, keine Aufräumwünsche, keine Vermutungen ohne Anhaltspunkt im Diff.
-Jeder Befund beantwortet: Was kann schiefgehen? Warum ist diese Stelle anfällig? Welche Wirkung ist wahrscheinlich? Welche konkrete Änderung senkt das Risiko?
-</befundlatte>
+<finding_bar>
+Report only material findings: bugs, data loss, security holes, wrong permissions, misbehaviour under load or on partial failure. No style points, no naming points, no cleanup wishes, no guesses without a hint in the diff.
+Each finding answers: What can go wrong? Why is this spot vulnerable? What impact is likely? Which concrete change lowers the risk?
+</finding_bar>
 
-<grenzen_der_sicht>
-Du siehst nur den Diff, nicht den übrigen Code. Was vom unsichtbaren Kontext abhängt, kennzeichnest du ausdrücklich als Vermutung und hältst die Sicherheit entsprechend niedrig. Erfinde keine Dateien, Zeilen, Abläufe oder Vorfälle. Ändere nichts am Code und schreibe keine fertigen Patches; beschreibe Korrekturen in Worten.
-</grenzen_der_sicht>
+<limits_of_view>
+You only see the diff, not the rest of the code. Mark anything that depends on invisible context explicitly as conjecture and keep the confidence low accordingly. Do not invent files, lines, flows or incidents. Do not change the code and do not write finished patches; describe fixes in words.
+</limits_of_view>
 
-<aufbau_bericht>
-Schreibe bericht.md genau in dieser Gliederung:
+<report_structure>
+Write report.md in exactly this structure, in the language of the task:
 
-## Urteil
-`freigeben` oder `nacharbeiten`, dazu ein Satz wie ein knappes Ship/No-Ship-Urteil, keine neutrale Nacherzählung.
+# Review: <short title>
 
-## Befunde
-Nach Schwere geordnet. Je Befund eine Überschrift der Form `### [kritisch|hoch|mittel|niedrig] Titel`, darunter:
-- Stelle: `datei:zeile_von-zeile_bis`
-- Sicherheit: Zahl von 0 bis 1 (ehrlich, bei Vermutung niedrig)
-- Problem und Wirkung: ein bis drei Sätze
-- Empfehlung: konkret
+## Verdict
+`approve` or `needs-work`, plus one sentence like a terse ship/no-ship verdict, not a neutral retelling.
 
-Gibt es nichts Belastbares: `Keine Befunde.` und das Restrisiko in einem Satz. Lieber ein starker Befund als mehrere schwache.
+## Findings
+Ordered by severity. For each finding a heading of the form `### [critical|high|medium|low] Title`, followed by:
+- Location: `file:line_from-line_to`
+- Confidence: a number from 0 to 1 (honest, low for conjecture)
+- Problem and impact: one to three sentences
+- Recommendation: concrete
 
-## Nächste Schritte
-Höchstens drei Punkte, oder `keine`.
-</aufbau_bericht>
+If there is nothing solid: `No findings.` and the residual risk in one sentence. One strong finding beats several weak ones.
+
+## Next steps
+At most three items, or `none`.
+
+## Assumptions and open points
+</report_structure>
 """
 
 ADVERSARIAL = """
-<haltung>
-Prüfe gegnerisch. Deine Aufgabe ist, das Vertrauen in die Änderung zu erschüttern, nicht sie zu bestätigen. Geh von Skepsis aus: Nimm an, die Änderung kann auf subtile, teure oder sichtbare Weise scheitern, bis der Diff etwas anderes belegt. Gib keinen Kredit für gute Absicht, Teillösungen oder spätere Nacharbeit. Funktioniert etwas nur im Gutfall, ist das eine echte Schwäche.
-</haltung>
+<stance>
+Review adversarially. Your job is to shake confidence in the change, not to confirm it. Start from skepticism: assume the change can fail in subtle, costly or visible ways until the diff shows otherwise. Give no credit for good intent, partial solutions or later follow-up work. If something only works in the good case, that is a real weakness.
+</stance>
 
-<angriffsflaeche>
-Gewichte, was teuer, gefährlich oder schwer zu bemerken ist:
-- Rechte, Mandantentrennung, Vertrauensgrenzen
-- Datenverlust, Verfälschung, Doppelungen, nicht umkehrbare Zustände
-- Rückgängigmachen, Wiederholungen, Teilausfälle, Idempotenz
-- Wettlaufsituationen, Reihenfolgeannahmen, veralteter Zustand
-- Leerzustand, Null, Zeitüberschreitung, ausgefallene Abhängigkeiten
-- Versionsunterschiede, Schema- und Migrationsrisiken, Kompatibilitätsbrüche
-- Lücken in der Beobachtbarkeit, die Fehler verstecken
-</angriffsflaeche>
+<attack-surface>
+Weigh what is costly, dangerous or hard to notice:
+- Permissions, tenant separation, trust boundaries
+- Data loss, corruption, duplicates, irreversible states
+- Rollback, retries, partial failures, idempotency
+- Race conditions, ordering assumptions, stale state
+- Empty state, null, timeouts, failed dependencies
+- Version differences, schema and migration risks, compatibility breaks
+- Gaps in observability that hide failures
+</attack-surface>
 
-<vorgehen>
-Versuche aktiv, die Änderung zu widerlegen: verletzte Invarianten, fehlende Wächter, unbehandelte Fehlerpfade, Annahmen, die unter Last nicht mehr gelten. Verfolge, wie schlechte Eingaben, Wiederholungen, gleichzeitige Aktionen oder halb fertige Abläufe durch den Code wandern. Nenne die stärksten zwei bis drei Einwände. Wirkt die Änderung sicher, sage das offen.
-</vorgehen>
+<approach>
+Actively try to refute the change: violated invariants, missing guards, unhandled error paths, assumptions that no longer hold under load. Follow how bad input, retries, concurrent actions or half-finished flows travel through the code. Name the strongest two to three objections. If the change looks safe, say so plainly.
+</approach>
 """
 
 
 def _git(args: list, cwd: str | None = None) -> str:
     try:
-        erg = subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd, timeout=60)
-    except (OSError, subprocess.SubprocessError) as fehler:
-        raise KonfigFehler(f"git nicht ausführbar: {fehler}") from fehler
-    if erg.returncode != 0:
-        raise KonfigFehler(f"git {' '.join(args[:2])} fehlgeschlagen: {erg.stderr.strip() or erg.stdout.strip()}")
-    return erg.stdout
+        res = subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigError(f"git cannot be run: {exc}") from exc
+    if res.returncode != 0:
+        raise ConfigError(f"git {' '.join(args[:2])} failed: {res.stderr.strip() or res.stdout.strip()}")
+    return res.stdout
 
 
-def hauptzweig(wurzel: str) -> str | None:
-    """main oder master (origin bevorzugt), falls es ihn gibt und wir nicht selbst darauf stehen."""
-    aktuell = _git(["rev-parse", "--abbrev-ref", "HEAD"], wurzel).strip()
-    for kandidat in ("origin/main", "origin/master", "main", "master"):
-        if kandidat.split("/")[-1] == aktuell:
+def main_branch(root_path: str) -> str | None:
+    """main or master (origin preferred), if it exists and we are not on it ourselves."""
+    current = _git(["rev-parse", "--abbrev-ref", "HEAD"], root_path).strip()
+    for candidate in ("origin/main", "origin/master", "main", "master"):
+        if candidate.split("/")[-1] == current:
             continue
         try:
-            _git(["rev-parse", "--verify", "--quiet", kandidat], wurzel)
-            return kandidat
-        except KonfigFehler:
+            _git(["rev-parse", "--verify", "--quiet", candidate], root_path)
+            return candidate
+        except ConfigError:
             continue
     return None
 
 
-def sammle(base: str | None, nur_arbeitsbaum: bool = False) -> dict:
-    """Diff und Dateiliste. Ohne base: alle Änderungen gegen HEAD (gestaged und ungestaged);
-    ist der Arbeitsbaum sauber, der Branch gegen den Hauptzweig."""
-    wurzel = _git(["rev-parse", "--show-toplevel"]).strip()
-    if not base and not nur_arbeitsbaum and not _git(["status", "--porcelain", "--untracked-files=no"], wurzel).strip():
-        base = hauptzweig(wurzel)
+def collect(base: str | None, worktree_only: bool = False) -> dict:
+    """Diff and file list. Without base: all changes against HEAD (staged and unstaged);
+    if the working tree is clean, the branch against the main branch."""
+    root_path = _git(["rev-parse", "--show-toplevel"]).strip()
+    if not base and not worktree_only and not _git(["status", "--porcelain", "--untracked-files=no"], root_path).strip():
+        base = main_branch(root_path)
     if base:
-        diff = _git(["diff", "--no-color", "-U8", f"{base}...HEAD", "--", ".", *AUSGENOMMEN], wurzel)
-        namen = _git(["diff", "--name-status", f"{base}...HEAD", "--", ".", *AUSGENOMMEN], wurzel)
-        ziel = f"Branch gegen {base}"
+        diff = _git(["diff", "--no-color", "-U8", f"{base}...HEAD", "--", ".", *EXCLUDED], root_path)
+        names = _git(["diff", "--name-status", f"{base}...HEAD", "--", ".", *EXCLUDED], root_path)
+        scope = f"branch against {base}"
     else:
-        diff = _git(["diff", "--no-color", "-U8", "HEAD", "--", ".", *AUSGENOMMEN], wurzel)
-        namen = _git(["diff", "--name-status", "HEAD", "--", ".", *AUSGENOMMEN], wurzel)
-        ziel = "aktuelle Änderungen gegen HEAD"
-    neu = [z for z in _git(["ls-files", "--others", "--exclude-standard"], wurzel).splitlines() if z]
-    return {"wurzel": wurzel, "diff": diff, "namen": namen, "ziel": ziel, "neu": neu}
+        diff = _git(["diff", "--no-color", "-U8", "HEAD", "--", ".", *EXCLUDED], root_path)
+        names = _git(["diff", "--name-status", "HEAD", "--", ".", *EXCLUDED], root_path)
+        scope = "current changes against HEAD"
+    new = [z for z in _git(["ls-files", "--others", "--exclude-standard"], root_path).splitlines() if z]
+    return {"root_path": root_path, "diff": diff, "names": names, "scope": scope, "new": new}
 
 
-def pruefe(daten: dict, trotzdem: bool) -> list:
-    """Hinweise für die Ausgabe; wirft bei leerem, zu großem oder verdächtigem Diff."""
-    if not daten["diff"].strip():
-        hinweis = f" Neue, nicht hinzugefügte Dateien ({len(daten['neu'])}) fehlen im Diff: erst `git add -N`." if daten["neu"] else ""
-        raise KonfigFehler(f"Keine Änderungen zu prüfen ({daten['ziel']}).{hinweis}")
-    if len(daten["diff"]) > MAX_ZEICHEN:
-        raise KonfigFehler(
-            f"Der Diff ist zu groß ({len(daten['diff']) // 1000} KB, erlaubt {MAX_ZEICHEN // 1000} KB). "
-            "Einen kleineren Bereich wählen (--base mit näherem Stand) oder in Teilen prüfen."
+def verify(doc: dict, force: bool) -> list:
+    """Notes for the output; raises on an empty, too large or suspicious diff."""
+    if not doc["diff"].strip():
+        note = f" New, untracked files ({len(doc['new'])}) are missing from the diff: run `git add -N` first." if doc["new"] else ""
+        raise ConfigError(f"No changes to review ({doc['scope']}).{note}")
+    if len(doc["diff"]) > MAX_CHARS:
+        raise ConfigError(
+            f"The diff is too large ({len(doc['diff']) // 1000} KB, allowed {MAX_CHARS // 1000} KB). "
+            "Pick a smaller range (--base with a closer state) or review in parts."
         )
-    hinweise = []
-    if daten["neu"]:
-        hinweise.append(f"{len(daten['neu'])} neue Dateien sind nicht im Git-Index und werden NICHT mitgeprüft (git add -N).")
-    verdacht = [z for z in daten["diff"].splitlines() if z.startswith("+") and GEHEIMNIS_MUSTER.search(z)]
-    env_dateien = [z.split()[-1] for z in daten["namen"].splitlines() if Path(z.split()[-1]).name.startswith(".env")]
-    if (verdacht or env_dateien) and not trotzdem:
-        raise KonfigFehler(
-            f"Der Diff enthält mögliche Geheimnisse ({len(verdacht)} Zeilen"
-            + (f", Dateien {', '.join(env_dateien)}" if env_dateien else "")
-            + "). Nichts wurde gesendet. Entfernen oder mit --trotzdem bewusst senden."
+    hints = []
+    if doc["new"]:
+        hints.append(f"{len(doc['new'])} new files are not in the git index and will NOT be reviewed (git add -N).")
+    suspects = [z for z in doc["diff"].splitlines() if z.startswith("+") and SECRET_PATTERNS.search(z)]
+    env_files = [z.split()[-1] for z in doc["names"].splitlines() if Path(z.split()[-1]).name.startswith(".env")]
+    if (suspects or env_files) and not force:
+        raise ConfigError(
+            f"The diff contains possible secrets ({len(suspects)} lines"
+            + (f", files {', '.join(env_files)}" if env_files else "")
+            + "). Nothing was sent. Remove them or send deliberately with --force."
         )
-    return hinweise
+    return hints
 
 
-def fuehre_review_aus(args) -> int:
-    from .lauf import fuehre_aus
-    daten = sammle(args.base)
-    hinweise = pruefe(daten, args.trotzdem)
-    zeilen = daten["diff"].count("\n")
-    dateien = len([z for z in daten["namen"].splitlines() if z.strip()])
-    print(f"Review: {daten['ziel']}, {dateien} Dateien, {zeilen} Diff-Zeilen, {len(daten['diff']) // 1000} KB")
-    for h in hinweise:
-        print(f"Hinweis: {h}")
-    if args.vorschau:
-        print("Vorschau: nichts gesendet. Dateien:\n" + daten["namen"])
+def run_review(args) -> int:
+    from .engine import execute
+    doc = collect(args.base)
+    hints = verify(doc, args.force)
+    lines = doc["diff"].count("\n")
+    file_list = len([z for z in doc["names"].splitlines() if z.strip()])
+    print(f"Review: {doc['scope']}, {file_list} files, {lines} diff lines, {len(doc['diff']) // 1000} KB")
+    for h in hints:
+        print(f"Note: {h}")
+    if args.preview:
+        print("Preview: nothing sent. Files:\n" + doc["names"])
         return 0
 
-    auftrag = AUFTRAG.format(ziel=f"Prüfziel: {daten['ziel']}.") + (ADVERSARIAL if args.adversarial else "")
-    if args.fokus:
-        auftrag += f"\nSchwerpunkt der Nutzerin: {' '.join(args.fokus)}\n"
-    with tempfile.TemporaryDirectory() as material:
-        (Path(material) / "aenderungen.patch").write_text(daten["diff"], encoding="utf-8")
-        (Path(material) / "geaenderte_dateien.txt").write_text(daten["namen"], encoding="utf-8")
-        lauf_args = argparse.Namespace(
-            auftrag=None, text=auftrag, anbieter=args.anbieter, modell=args.modell, runner=args.runner,
-            werkzeuge="lesen,schreiben", max_runden=args.max_runden, zeit=args.zeit, ordner=None,
-            material=material, ueber_litellm=False, fortsetzen=None, aufwand=args.aufwand,
-            projekt=None, schreibend=False, art="review",
+    task = REVIEW_TASK.format(scope=f"Review target: {doc['scope']}.") + (ADVERSARIAL if args.adversarial else "")
+    if args.focus:
+        task += f"\nFocus requested by the user: {' '.join(args.focus)}\n"
+    with tempfile.TemporaryDirectory() as files:
+        (Path(files) / "changes.patch").write_text(doc["diff"], encoding="utf-8")
+        (Path(files) / "changed_files.txt").write_text(doc["names"], encoding="utf-8")
+        run_args = argparse.Namespace(
+            task=None, text=task, provider=args.provider, model=args.model, runner=args.runner,
+            tool_list="read,write", max_turns=args.max_turns, time_limit=args.time_limit, folder=None,
+            files=files, via_litellm=False, resume=None, effort=args.effort,
+            project=None, writable=False, kind="review",
         )
-        return fuehre_aus(lauf_args)
+        return execute(run_args)

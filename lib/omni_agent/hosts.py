@@ -1,10 +1,10 @@
-"""Fernziele: Omni-Agent auf einem anderen Rechner ausführen (Mac mini, Server, Cloud-VM) über SSH.
+"""Remote hosts: run Omni-Agent on another machine (Mac mini, server, cloud VM) over SSH.
 
-`--host NAME` leitet den Befehl unverändert an `omni-agent` auf dem Ziel weiter. Dort liegen Schlüssel, Agent-CLIs,
-Projekte und Läufe; nichts davon wird übertragen. Tailscale ist nichts Besonderes: jeder Name oder jede Adresse,
-die `ssh` erreicht (auch Tailscale-IP, MagicDNS-Name, Tailscale SSH), geht.
+`--host NAME` forwards the command unchanged to `omni-agent` on the host. Keys, agent CLIs, projects and runs
+live there; none of it is transferred. Tailscale is nothing special: any name or address `ssh` can reach
+(Tailscale IP, MagicDNS name, Tailscale SSH) works.
 
-Gespeichert wird nur, wie das Ziel zu erreichen ist (`hosts.json`), nie ein Geheimnis.
+Only how to reach the host is stored (`hosts.json`), never a secret.
 """
 from __future__ import annotations
 
@@ -15,87 +15,87 @@ import shutil
 import subprocess
 import sys
 
-from .konfig import KonfigFehler, claude_sitzung, home
+from .config import ConfigError, claude_session, home
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
-STANDARD_BEFEHL = "omni-agent"
-INSTALL_ORDNER = ".omni-agent-app"
+DEFAULT_COMMAND = "omni-agent"
+INSTALL_DIR = ".omni-agent-app"
 REPO = "https://github.com/alexodexo/omni-agent"
 
 
-def datei():
+def data_file():
     return home() / "hosts.json"
 
 
-def lade() -> dict:
+def load() -> dict:
     try:
-        d = json.loads(datei().read_text(encoding="utf-8"))
+        d = json.loads(data_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return d if isinstance(d, dict) else {}
 
 
-def speichere(daten: dict) -> None:
+def save(doc: dict) -> None:
     home().mkdir(parents=True, exist_ok=True)
-    datei().write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    data_file().write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def pruefe_name(name: str) -> str:
+def check_name(name: str) -> str:
     if not NAME.match(name or ""):
-        raise KonfigFehler("Zielname: Kleinbuchstaben, Ziffern und Bindestrich, z. B. mini")
+        raise ConfigError("Host name: lowercase letters, digits and hyphen, e.g. mini")
     return name
 
 
-def hole(name: str) -> dict:
-    eintraege = lade()
-    if name not in eintraege:
-        vorhanden = ", ".join(eintraege) or "keine"
-        raise KonfigFehler(f"Ziel '{name}' gibt es nicht. Vorhandene: {vorhanden}. Anlegen: omni-agent host add {name} --ssh BENUTZER@ADRESSE")
-    return eintraege[name]
+def lookup(name: str) -> dict:
+    entries = load()
+    if name not in entries:
+        existing = ", ".join(entries) or "none"
+        raise ConfigError(f"Host '{name}' does not exist. Existing: {existing}. Add it: omni-agent host add {name} --ssh USER@ADDRESS")
+    return entries[name]
 
 
-def fuege_hinzu(name: str, ssh: str, befehl: str | None = None, ersetzen: bool = False) -> None:
-    pruefe_name(name)
+def add_entry(name: str, ssh: str, command: str | None = None, overwrite: bool = False) -> None:
+    check_name(name)
     if not ssh or ssh.startswith("-") or any(c.isspace() for c in ssh):
-        raise KonfigFehler("--ssh erwartet ein Ziel wie benutzer@adresse (Name, IP oder Tailscale-Name), ohne Leerzeichen und ohne führenden Bindestrich")
-    eintraege = lade()
-    if name in eintraege and not ersetzen:
-        raise KonfigFehler(f"Ziel '{name}' gibt es schon. Überschreiben: --ersetzen")
-    eintraege[name] = {"ssh": ssh, "befehl": befehl or STANDARD_BEFEHL}
-    speichere(eintraege)
+        raise ConfigError("--ssh expects a target like user@address (name, IP or Tailscale name), without spaces and without a leading hyphen")
+    entries = load()
+    if name in entries and not overwrite:
+        raise ConfigError(f"Host '{name}' already exists. Overwrite: --replace")
+    entries[name] = {"ssh": ssh, "command": command or DEFAULT_COMMAND}
+    save(entries)
 
 
-def entferne(name: str) -> None:
-    eintraege = lade()
-    if name not in eintraege:
-        raise KonfigFehler(f"Ziel '{name}' gibt es nicht")
-    del eintraege[name]
-    speichere(eintraege)
+def remove_entry(name: str) -> None:
+    entries = load()
+    if name not in entries:
+        raise ConfigError(f"Host '{name}' does not exist")
+    del entries[name]
+    save(entries)
 
 
-def ssh_argv(eintrag: dict, entfernt: str, tty: bool = False) -> list:
+def ssh_argv(entry: dict, remote: str, tty: bool = False) -> list:
     exe = shutil.which("ssh")
     if not exe:
-        raise KonfigFehler("ssh ist nicht installiert (Befehl 'ssh' nicht im PATH)")
+        raise ConfigError("ssh is not installed (command 'ssh' not on PATH)")
     return [
         exe, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30",
-        *(["-t"] if tty else []), "--", eintrag["ssh"], entfernt,
+        *(["-t"] if tty else []), "--", entry["ssh"], remote,
     ]
 
 
-def entfernter_befehl(eintrag: dict, argv: list) -> str:
-    """Die Zeile, die auf dem Ziel läuft. Die Claude-Sitzung geht mit, damit status/result dort dieselbe Sitzung meinen."""
-    vorne = ""
-    if claude_sitzung():
-        vorne = f"OMNI_AGENT_SITZUNG={shlex.quote(claude_sitzung())} "
-    befehl = eintrag.get("befehl") or STANDARD_BEFEHL
-    # Der Befehl darf mit ~ oder $HOME beginnen (Pfad zum Skript); die Argumente werden immer zitiert.
-    return vorne + befehl + " " + " ".join(shlex.quote(a) for a in argv)
+def remote_command(entry: dict, argv: list) -> str:
+    """The line that runs on the host. The Claude session goes along so status/result there mean the same session."""
+    lead = ""
+    if claude_session():
+        lead = f"OMNI_AGENT_SESSION={shlex.quote(claude_session())} "
+    command = entry.get("command") or DEFAULT_COMMAND
+    # The command may start with ~ or $HOME (path to the script); the arguments are always quoted.
+    return lead + command + " " + " ".join(shlex.quote(a) for a in argv)
 
 
-def ohne_host(argv: list) -> list:
-    """Entfernt --host NAME / --host=NAME aus der Argumentliste."""
-    aus, i = [], 0
+def without_host(argv: list) -> list:
+    """Removes --host NAME / --host=NAME from the argument list."""
+    out, i = [], 0
     while i < len(argv):
         if argv[i] == "--host":
             i += 2
@@ -103,73 +103,73 @@ def ohne_host(argv: list) -> list:
         if argv[i].startswith("--host="):
             i += 1
             continue
-        aus.append(argv[i])
+        out.append(argv[i])
         i += 1
-    return aus
+    return out
 
 
-def leite_weiter(name: str, argv: list, args=None) -> int:
-    """Führt `omni-agent <argv>` auf dem Ziel aus; Ausgabe und Exit-Code kommen unverändert zurück."""
-    eintrag = hole(name)
-    argv = ohne_host(argv)
+def forward(name: str, argv: list, args=None) -> int:
+    """Runs `omni-agent <argv>` on the host; output and exit code come back unchanged."""
+    entry = lookup(name)
+    argv = without_host(argv)
     if args is not None:
-        befehl = getattr(args, "befehl", "")
-        if getattr(args, "material", None):
-            raise KonfigFehler("--material ist ein lokaler Ordner und wird nicht übertragen. Lege das Material auf dem Ziel ab und arbeite dort mit --projekt ORDNER.")
-        if befehl == "review":
-            raise KonfigFehler("review prüft das Repo im aktuellen Ordner und läuft deshalb nicht mit --host. Auf dem Ziel: omni-agent review im dortigen Checkout (per ssh).")
-        # Auftragsdatei liegt lokal: ihren Inhalt als --text mitschicken
-        if befehl == "run" and getattr(args, "auftrag", None):
+        command = getattr(args, "command", "")
+        if getattr(args, "files", None):
+            raise ConfigError("--files is a local folder and is not transferred. Put the files on the host and work there with --project DIR.")
+        if command == "review":
+            raise ConfigError("review checks the repo in the current folder and therefore does not work with --host. On the host: run omni-agent review in its checkout (via ssh).")
+        # The task file is local: send its content as --text
+        if command == "run" and getattr(args, "task", None):
             from pathlib import Path
-            quelle = Path(args.auftrag).expanduser()
-            if quelle.is_file() and args.auftrag in argv:
-                argv.remove(args.auftrag)
-                argv += ["--text", quelle.read_text(encoding="utf-8")]
-    laeuft = subprocess.run(ssh_argv(eintrag, entfernter_befehl(eintrag, argv)))
-    if laeuft.returncode == 255:
-        print(f"Fehler: ssh zu '{name}' ({eintrag['ssh']}) ist gescheitert. Erreichbar? Schlüssel hinterlegt (BatchMode, keine Passwortabfrage)? Prüfen: omni-agent host test {name}", file=sys.stderr)
-    return laeuft.returncode
+            source = Path(args.task).expanduser()
+            if source.is_file() and args.task in argv:
+                argv.remove(args.task)
+                argv += ["--text", source.read_text(encoding="utf-8")]
+    running = subprocess.run(ssh_argv(entry, remote_command(entry, argv)))
+    if running.returncode == 255:
+        print(f"Error: ssh to '{name}' ({entry['ssh']}) failed. Reachable? Key installed (BatchMode, no password prompt)? Check: omni-agent host test {name}", file=sys.stderr)
+    return running.returncode
 
 
-def teste(name: str) -> tuple:
-    """(ok, Text). Fragt `omni-agent doctor` auf dem Ziel und sagt, was fehlt."""
-    eintrag = hole(name)
+def test_target(name: str) -> tuple:
+    """(ok, text). Runs `omni-agent doctor` on the host and says what is missing."""
+    entry = lookup(name)
     try:
-        erg = subprocess.run(
-            ssh_argv(eintrag, f"{eintrag.get('befehl') or STANDARD_BEFEHL} doctor"),
+        res = subprocess.run(
+            ssh_argv(entry, (entry.get("command") or DEFAULT_COMMAND) + " doctor"),
             capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
-        return False, "Zeitüberschreitung beim Verbinden"
-    if erg.returncode == 255:
-        return False, "ssh gescheitert: " + (erg.stderr.strip().splitlines() or ["keine Meldung"])[-1]
-    if erg.returncode == 127 or "not found" in erg.stderr or "nicht gefunden" in erg.stderr:
-        return False, f"Verbindung steht, aber '{eintrag.get('befehl') or STANDARD_BEFEHL}' gibt es dort nicht. Installieren: omni-agent host install {name}"
-    if erg.returncode != 0:
-        return False, (erg.stderr.strip() or erg.stdout.strip() or f"Exit-Code {erg.returncode}")[:400]
-    return True, erg.stdout
+        return False, "Timed out while connecting"
+    if res.returncode == 255:
+        return False, "ssh failed: " + (res.stderr.strip().splitlines() or ["no message"])[-1]
+    if res.returncode == 127 or "not found" in res.stderr or "nicht gefunden" in res.stderr:
+        return False, "Connection works, but '" + (entry.get("command") or DEFAULT_COMMAND) + f"' does not exist there. Install it: omni-agent host install {name}"
+    if res.returncode != 0:
+        return False, (res.stderr.strip() or res.stdout.strip() or f"exit code {res.returncode}")[:400]
+    return True, res.stdout
 
 
-def installiere(name: str) -> str:
-    """Holt Omni-Agent per git auf das Ziel (~/.omni-agent-app) und trägt den Pfad als Befehl ein.
+def install_on_target(name: str) -> str:
+    """Fetches Omni-Agent onto the host with git (~/.omni-agent-app) and stores the path as its command.
 
-    Schlüssel und Anmeldungen richtet man dort selbst ein (omni-agent setup per ssh). Nichts wird übertragen."""
-    eintrag = hole(name)
-    skript = (
-        "set -e; command -v git >/dev/null || { echo 'git fehlt auf dem Ziel' >&2; exit 3; }; "
-        "command -v python3 >/dev/null || { echo 'python3 fehlt auf dem Ziel' >&2; exit 3; }; "
-        f"python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 4)' || {{ echo 'Python 3.9 oder neuer nötig' >&2; exit 4; }}; "
-        f"if [ -d \"$HOME/{INSTALL_ORDNER}/.git\" ]; then git -C \"$HOME/{INSTALL_ORDNER}\" pull --ff-only -q; "
-        f"else git clone --depth 1 -q {shlex.quote(REPO)} \"$HOME/{INSTALL_ORDNER}\"; fi; "
-        f"echo \"$HOME/{INSTALL_ORDNER}/bin/omni-agent\""
+    Keys and logins are set up there by hand (omni-agent setup via ssh). Nothing is transferred."""
+    entry = lookup(name)
+    script = (
+        "set -e; command -v git >/dev/null || { echo 'git is missing on the host' >&2; exit 3; }; "
+        "command -v python3 >/dev/null || { echo 'python3 is missing on the host' >&2; exit 3; }; "
+        f"python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 4)' || {{ echo 'Python 3.9 or newer required' >&2; exit 4; }}; "
+        f"if [ -d \"$HOME/{INSTALL_DIR}/.git\" ]; then git -C \"$HOME/{INSTALL_DIR}\" pull --ff-only -q; "
+        f"else git clone --depth 1 -q {shlex.quote(REPO)} \"$HOME/{INSTALL_DIR}\"; fi; "
+        f"echo \"$HOME/{INSTALL_DIR}/bin/omni-agent\""
     )
-    erg = subprocess.run(ssh_argv(eintrag, skript), capture_output=True, text=True, timeout=180)
-    if erg.returncode != 0:
-        raise KonfigFehler("Installation auf dem Ziel gescheitert: " + (erg.stderr.strip().splitlines() or [f"Exit-Code {erg.returncode}"])[-1])
-    pfad = (erg.stdout.strip().splitlines() or [""])[-1]
-    if not pfad.endswith("/bin/omni-agent"):
-        raise KonfigFehler("Installation auf dem Ziel lieferte keinen Pfad")
-    eintraege = lade()
-    eintraege[name]["befehl"] = shlex.quote(pfad)
-    speichere(eintraege)
-    return pfad
+    res = subprocess.run(ssh_argv(entry, script), capture_output=True, text=True, timeout=180)
+    if res.returncode != 0:
+        raise ConfigError("Installation on the host failed: " + (res.stderr.strip().splitlines() or [f"exit code {res.returncode}"])[-1])
+    file_path = (res.stdout.strip().splitlines() or [""])[-1]
+    if not file_path.endswith("/bin/omni-agent"):
+        raise ConfigError("Installation on the host returned no path")
+    entries = load()
+    entries[name]["command"] = shlex.quote(file_path)
+    save(entries)
+    return file_path

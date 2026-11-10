@@ -1,74 +1,74 @@
-# Installation durch einen Agenten
+# Installation by an agent
 
-**Für Claude Code (oder einen anderen Agenten), wenn die Nutzerin sagt „Installiere mir Omni-Agent" oder „Geh mit mir die Installation durch".**
-Arbeite die Schritte in dieser Reihenfolge ab. Führe nichts aus, was hier nicht steht. Schlüssel fragst du **nie** im Chat ab.
+**For Claude Code (or another agent) when the user says "Install Omni-Agent for me" or "Walk me through the installation".**
+Work through the steps in this order. Do not run anything that is not listed here. You **never** ask for keys in the chat.
 
-## 1. Voraussetzungen prüfen
+## 1. Check the requirements
 
 ```bash
-python3 --version      # 3.9 oder neuer nötig
-claude --version       # Standard-Runner
+python3 --version      # 3.9 or newer required
+claude --version       # default runner
 ```
 
-- Python fehlt oder ist zu alt: sage es der Nutzerin und stoppe. Plattformen: macOS, Linux, WSL.
-- `claude` fehlt: Claude Code muss installiert sein, sonst gibt es keinen Standard-Runner. Alternative Runner (opencode, codex) nur auf Wunsch.
+- Python is missing or too old: tell the user and stop. Platforms: macOS, Linux, WSL.
+- `claude` is missing: Claude Code must be installed, otherwise there is no default runner. Alternative runners (opencode, codex) only on request.
 
-## 2. Plugin installieren (empfohlen)
+## 2. Install the plugin (recommended)
 
 ```bash
 claude plugin marketplace add alexodexo/omni-agent
 claude plugin install omni-agent@omni-agent
 ```
 
-Danach in Claude Code `/reload-plugins` (oder neu starten). Prüfe: `claude plugin list` zeigt `omni-agent@omni-agent` als enabled.
+Then run `/reload-plugins` in Claude Code (or restart). Check: `claude plugin list` shows `omni-agent@omni-agent` as enabled.
 
-*Ohne Plugin:* Repo klonen und `bin/omni-agent` direkt benutzen. Alle Befehle unten gelten gleich.
+*Without the plugin:* clone the repo and use `bin/omni-agent` directly. All commands below work the same.
 
-## 3. Einrichten
+## 3. Set up
 
 ```bash
 omni-agent setup
 ```
 
-(Falls `omni-agent` noch nicht im PATH ist: `"<Plugin- oder Repo-Ordner>/bin/omni-agent" setup`. Im Plugin ist das `${CLAUDE_PLUGIN_ROOT}/bin/omni-agent`.)
+(If `omni-agent` is not in the PATH yet: `"<plugin or repo folder>/bin/omni-agent" setup`. Inside the plugin that is `${CLAUDE_PLUGIN_ROOT}/bin/omni-agent`.)
 
-Der Befehl legt `~/.omni-agent/` und die Schlüsseldatei `~/.omni-agent/env` (Rechte 600) an, verlinkt `omni-agent` nach `~/.local/bin` und prüft den Rechner. Fasse das Ergebnis für die Nutzerin kurz zusammen.
+The command creates `~/.omni-agent/` and the key file `~/.omni-agent/env` (mode 600), links `omni-agent` into `~/.local/bin` and checks the machine. Summarize the result briefly for the user.
 
-## 4. Anbieter wählen und Schlüssel eintragen
+## 4. Choose a provider and enter the key
 
-Frage die Nutzerin, welchen Anbieter sie nutzen will (`omni-agent anbieter` listet sie mit Datenort). Nenne vor der Wahl den **Datenort** (zum Beispiel DeepSeek: China) und dass nichts Personenbezogenes oder Internes in Aufträge gehört.
+Ask the user which provider they want to use (`omni-agent providers` lists them with their data location). Before the choice, state the **data location** (for example DeepSeek: China) and that nothing personal or internal belongs in tasks.
 
 ```bash
-omni-agent setup --anbieter <anbieter>
+omni-agent setup --provider <provider>
 ```
 
-Das druckt, welche Zeile in `~/.omni-agent/env` fehlt. **Die Nutzerin trägt den Schlüssel selbst ein**, in ihrem Editor. Du schreibst ihn nicht, liest die Datei nicht aus und fragst nicht im Chat danach.
+This prints which line is missing in `~/.omni-agent/env`. **The user enters the key themselves**, in their own editor. You do not write it, do not read the file and do not ask for it in the chat.
 
-## 5. Prüfen
+## 5. Check
 
 ```bash
 omni-agent doctor
 ```
 
-Erwartet: der gewählte Anbieter zeigt „Schlüssel: gesetzt" und einen installierten passenden Runner. Zeigt der Anbieter „keiner davon installiert" (zum Beispiel EUrouter oder Nvidia), brauchen sie `opencode` oder das Extra LiteLLM (`omni-agent extras litellm install`, nur auf Wunsch).
+Expected: the chosen provider shows "key: set" and an installed matching runner. If the provider shows "none installed" (for example EUrouter or Nvidia), it needs `opencode` or the LiteLLM extra (`omni-agent extras litellm install`, only on request).
 
-## 6. Probelauf
+## 6. Trial run
 
-Mit Zustimmung der Nutzerin einen kleinen, harmlosen Auftrag:
+With the user's consent, a small, harmless task:
 
 ```bash
-omni-agent run --anbieter <anbieter> --text "Nenne in drei Stichpunkten, wofür ein Hintergrund-Agent nützlich ist." --max-runden 3 --werkzeuge lesen,schreiben
+omni-agent run --provider <provider> --text "Name in three bullet points what a background agent is useful for." --max-turns 3 --tools read,write
 ```
 
-Erfolg: Exit 0 und `Bericht: …/bericht.md`. Lies den Bericht und zeige ihn kurz. Misserfolg: Exit-Code lesen (2 Konfiguration, 3 Endpunkt nicht erreichbar, 124 Zeitlimit) und `fehler.log` im Laufordner ansehen.
+Success: exit 0 and `Report: …/report.md`. Read the report and show it briefly. Failure: read the exit code (2 configuration, 3 endpoint unreachable, 124 timeout) and look at `error.log` in the run folder.
 
-## 7. Fertig
+## 7. Done
 
-Sage der Nutzerin, wie es weitergeht: `/omni-agent:run <auftrag>` (mit `--konto NAME` oder `--anbieter ID`), `/omni-agent:review`, `/omni-agent:status`, `/omni-agent:doctor`. Claude kann auch von selbst über den Subagenten `omni-agent:lauf` delegieren. Erwähne, dass Ergebnisse von Fremdmodellen Entwürfe sind.
+Tell the user what comes next: `/omni-agent:run <task>` (with `--account NAME` or `--provider ID`), `/omni-agent:review`, `/omni-agent:status`, `/omni-agent:doctor`. Claude can also delegate on its own through the subagent `omni-agent:worker`. Mention that results from third-party models are drafts.
 
-## Was du nicht tust
+## What you do not do
 
-- Keinen Schlüssel erfragen, ausgeben, in eine Datei schreiben oder in einen Befehl einsetzen.
-- `--werkzeuge +shell` nur auf ausdrücklichen Wunsch.
-- Keinen Abo-Token (`CLAUDE_CODE_OAUTH_TOKEN`) empfehlen: ob unbeaufsichtigte Läufe damit zulässig sind, ist nicht belegt. Empfohlen ist ein API-Schlüssel.
-- Das Extra LiteLLM nur installieren, wenn die Nutzerin es will.
+- Do not ask for, print, write to a file or insert into a command any key.
+- `--tools +shell` only on explicit request.
+- Do not recommend a subscription token (`CLAUDE_CODE_OAUTH_TOKEN`): whether unattended runs with it are allowed is not documented. An API key is recommended.
+- Install the LiteLLM extra only if the user wants it.

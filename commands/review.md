@@ -1,36 +1,36 @@
 ---
-description: Lässt die Git-Änderungen im aktuellen Repo von einem anderen Modell oder Konto prüfen (Zweitmeinung). Der Diff verlässt den Rechner.
-argument-hint: '[--vordergrund|--hintergrund] [--base REF] [--konto NAME | --anbieter ID] [--adversarial] [Schwerpunkt]'
+description: Has another model or account review the git changes in the current repo (second opinion). The diff leaves this machine.
+argument-hint: '[--foreground|--background] [--base REF] [--account NAME | --provider ID] [--adversarial] [focus]'
 disable-model-invocation: true
 allowed-tools: Bash(omni-agent:*), Bash(git:*), AskUserQuestion
 ---
 
-Starte ein Review durch Omni-Agent.
+Start a review through Omni-Agent.
 
-Rohe Argumente:
+Raw arguments:
 `$ARGUMENTS`
 
-Grundregel: Dieser Befehl **prüft nur**. Behebe nichts, wende keine Patches an und kündige keine Änderungen an. Deine einzige Aufgabe ist, das Review zu starten und das Ergebnis der Nutzerin zu geben.
+Ground rule: this command **only reviews**. Do not fix anything, do not apply patches and do not announce changes. Your only job is to start the review and hand the result to the user.
 
-Ablauf:
+Procedure:
 
-1. **Vorschau, ohne etwas zu senden.** Führe `omni-agent review --vorschau` aus, mit den Optionen der Nutzerin ohne `--vordergrund`/`--hintergrund` (also `--base`, `--konto`, `--anbieter`, `--adversarial`, Schwerpunkt-Text). Die Vorschau nennt Ziel (Arbeitsbaum oder Branch gegen den Hauptzweig), Dateien, Größe und Warnungen. Meldet sie „Geheimnisse" oder „Keine Änderungen", sende **nichts** und sage der Nutzerin den Grund.
-2. **Gehen die Daten an einen Fremdanbieter?** Nur wenn die Nutzerin `--anbieter` mit einem Fremdanbieter nennt (nicht Codex, nicht `claude-…`): Sage in zwei Zeilen, welche Dateien an welchen Anbieter gehen und wo dessen Daten liegen (`omni-agent anbieter`). Hat die Nutzerin den Anbieter ausdrücklich genannt, ist das die Freigabe, frage nicht erneut.
-3. **Modus.** `--vordergrund`: im Vordergrund. `--hintergrund` oder ohne Flag: im Hintergrund.
-4. **Start.** Im Hintergrund mit dem `Bash`-Werkzeug und `run_in_background: true`, im Vordergrund normal mit `timeout: 600000`:
+1. **Preview, sending nothing.** Run `omni-agent review --preview` with the user's options minus `--foreground`/`--background` (that is `--base`, `--account`, `--provider`, `--adversarial`, focus text). The preview names the target (working tree, or branch against the main branch), files, size and warnings. If it reports "secrets" or "no changes", send **nothing** and tell the user why.
+2. **Does the data go to a third-party provider?** Only if the user names `--provider` with a third-party provider (not Codex, not `claude-…`): say in two lines which files go to which provider and where its data is stored (`omni-agent providers`). If the user named the provider explicitly, that is the approval; do not ask again.
+3. **Mode.** `--foreground`: run in the foreground. `--background` or no flag: run in the background.
+4. **Start.** In the background with the `Bash` tool and `run_in_background: true`, in the foreground normally with `timeout: 600000`:
 
 ```bash
-omni-agent review OPTIONEN
+omni-agent review OPTIONS
 ```
 
-   Im Hintergrund sage in einer Zeile: gestartet, du wirst benachrichtigt, Stand mit `/omni-agent:status`. Frage nicht ab, rufe die Ausgabe nicht ab, warte nicht in diesem Zug.
-5. **Wenn der Lauf endet:** `omni-agent result` zeigt den Bericht. Gib ihn wörtlich weiter (Skill `omni-agent-ergebnis`): Urteil, Befunde nach Schwere mit Datei und Zeile, nächste Schritte.
+   In the background, say in one line: started, you will be notified, check progress with `/omni-agent:status`. Do not poll, do not fetch the output, do not wait in this turn.
+5. **When the run ends:** `omni-agent result` shows the report. Pass it on verbatim (skill `omni-agent-results`): verdict, findings by severity with file and line, next steps.
 
-Danach **anhalten.** Behebe keinen Befund. Frage die Nutzerin, welche Befunde sie behoben haben will, bevor du eine Datei anfasst. Auch dann nicht automatisch, wenn die Lösung offensichtlich ist.
+Then **stop.** Do not fix any finding. Ask the user which findings they want fixed before you touch a file. Not automatically even when the fix is obvious.
 
-Argumente:
+Arguments:
 
-- Gib die Argumente der Nutzerin unverändert weiter, außer `--vordergrund`/`--hintergrund`.
-- Ohne `--konto`/`--anbieter` gilt der Standard der Nutzerin (`omni-agent konto standard`).
-- Ohne `--base` prüft Omni-Agent die Änderungen gegen HEAD; ist der Arbeitsbaum sauber, den Branch gegen den Hauptzweig.
-- Für gegnerisches Prüfen (die gewählte Lösung infrage stellen) gibt es `/omni-agent:adversarial-review`.
+- Pass the user's arguments on unchanged, except `--foreground`/`--background`.
+- Without `--account`/`--provider` the user's default applies (`omni-agent account default`).
+- Without `--base`, Omni-Agent reviews the changes against HEAD; if the working tree is clean, it reviews the branch against the main branch.
+- For adversarial review (challenging the chosen solution) use `/omni-agent:adversarial-review`.

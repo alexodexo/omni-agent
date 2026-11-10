@@ -1,0 +1,24 @@
+name: Report a bug
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: The command, the expected result and the actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `omni-agent doctor`
+      description: Please check first that no key is in it. Doctor only shows "set" or "missing".
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: macOS 15, Python 3.12, Claude Code 2.1.x

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Omni-Agent-Kern. Findet seine Bibliothek über den eigenen Dateipfad (auch über Symlink),
-weil ${CLAUDE_PLUGIN_ROOT} in Bash-Tool-Befehlen nicht gesetzt ist."""
+"""Omni-Agent core. Finds its library through its own file path (also through a symlink),
+because ${CLAUDE_PLUGIN_ROOT} is not set in Bash tool commands."""
 import os
 import sys
 
 if sys.version_info < (3, 9):
-    sys.exit("Omni-Agent braucht Python 3.9 oder neuer.")
+    sys.exit("Omni-Agent needs Python 3.9 or newer.")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 

@@ -1,5 +1,5 @@
 {
-  "description": "Omni-Agent: Sitzung erkennen, Läufe beim Beenden aufräumen, optionales Review-Gate",
+  "description": "Omni-Agent: detect the session, clean up runs on exit, optional review gate",
   "hooks": {
     "SessionStart": [
       {
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/omni-agent\" hook ende",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/omni-agent\" hook end",
             "timeout": 5
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/omni-agent\" hook stopp",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/omni-agent\" hook stop",
             "timeout": 900
           }
         ]

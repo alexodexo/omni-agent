@@ -1,13 +1,13 @@
-"""Runner `codex`: OpenAI Codex CLI (`codex exec`). Spricht nur die Responses-API.
+"""Runner `codex`: OpenAI Codex CLI (`codex exec`). Speaks only the Responses API.
 
-Zwei Arten:
-- Anbieter `codex` (konto_art "login"): die Anmeldung der Codex-CLI selbst (ChatGPT-Konto oder API-Schlüssel
-  aus `codex login`). Live geprüft mit dem ChatGPT-Konto. Die persönliche config.toml und die Regeln des
-  Nutzers werden NICHT geladen (--ignore-user-config, --ignore-rules), nur die Anmeldung wird benutzt.
-- Fremdanbieter mit Responses-API (z. B. EUrouter): eigene, leere CODEX_HOME. Nicht live geprüft.
+Two kinds:
+- Provider `codex` (account kind "login"): the sign-in of the Codex CLI itself (ChatGPT account or API key
+  from `codex login`). Verified live with the ChatGPT account. The user's personal config.toml and rules
+  are NOT loaded (--ignore-user-config, --ignore-rules); only the sign-in is used.
+- Third-party provider with a Responses API (e.g. EUrouter): its own empty CODEX_HOME. Not verified live.
 
-Codex kann keine einzelnen Werkzeuge verbieten, seine Shell ist immer da (nur durch die Sandbox begrenzt).
-Darum verlangt der Kern hier ausdrücklich `--werkzeuge +shell`.
+Codex cannot forbid individual tools; its shell is always there (limited only by the sandbox).
+That is why the core explicitly requires `--tools +shell` here.
 """
 from __future__ import annotations
 
@@ -15,87 +15,87 @@ import json
 import os
 import shutil
 
-from .basis import Befehl, LaufKontext, Runner, grundumgebung, kurz
+from .base import Command, RunContext, Runner, base_env, shorten
 
 
 class CodexRunner(Runner):
     name = "codex"
     binary = "codex"
-    protokolle = ("openai-responses",)
-    kann = frozenset({"lesen", "schreiben", "shell"})
-    nicht_verbietbar = frozenset({"shell"})
-    in_sandbox = True  # --sandbox workspace-write: Schreiben nur im Laufordner, kein Netz
-    hinweis = "Nur Responses-API. Shell ist immer da (Sandbox workspace-write). Mit Anbieter 'codex' (Anmeldung) live geprüft."
+    protocols = ("openai-responses",)
+    can = frozenset({"read", "write", "shell"})
+    cannot_forbid = frozenset({"shell"})
+    in_sandbox = True  # --sandbox workspace-write: write only in the run folder, no network
+    note = "Responses API only. Shell is always there (sandbox workspace-write). Verified live with provider 'codex' (sign-in)."
 
-    # Orte, an denen Codex liegt, ohne im PATH zu stehen (z. B. mit der ChatGPT-App geliefert)
-    ORTE = (
+    # Places where Codex lives without being on PATH (e.g. shipped with the ChatGPT app)
+    LOCATIONS = (
         "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
         "/Applications/Codex.app/Contents/Resources/codex",
     )
 
-    def pfad(self) -> str | None:
+    def file_path(self) -> str | None:
         if os.environ.get("OMNI_AGENT_CODEX") and os.access(os.environ["OMNI_AGENT_CODEX"], os.X_OK):
             return os.environ["OMNI_AGENT_CODEX"]
-        gefunden = shutil.which(self.binary)
-        if gefunden:
-            return gefunden
-        for ort in self.ORTE:
-            if os.access(ort, os.X_OK):
-                return ort
+        found = shutil.which(self.binary)
+        if found:
+            return found
+        for location in self.LOCATIONS:
+            if os.access(location, os.X_OK):
+                return location
         return None
 
-    def baue(self, ctx: LaufKontext) -> Befehl:
-        a = ctx.anbieter
-        env = grundumgebung()
-        exe = self.pfad() or self.binary
-        sitzung = ctx.extra.get("fortsetzen")
-        aufwand = ctx.extra.get("aufwand")
-        optionen = ["--json", "--skip-git-repo-check"]
-        # Im Projekt nur lesen, außer die Nutzerin erlaubt Schreiben; im Laufordner darf der Agent bericht.md schreiben.
-        sandbox = "read-only" if (ctx.projekt and not ctx.schreibend) else "workspace-write"
-        # `resume` kennt weder --sandbox noch --cd: gleiche Wirkung über -c, Ordner ist das aktuelle Verzeichnis
-        optionen += ["-c", f'sandbox_mode="{sandbox}"'] if sitzung else ["--sandbox", sandbox]
+    def build(self, ctx: RunContext) -> Command:
+        a = ctx.provider
+        env = base_env()
+        exe = self.file_path() or self.binary
+        session = ctx.extra.get("resume")
+        effort = ctx.extra.get("effort")
+        options = ["--json", "--skip-git-repo-check"]
+        # In a project read-only, unless the user allows writing; in the run folder the agent may write report.md.
+        sandbox = "read-only" if (ctx.project and not ctx.writable) else "workspace-write"
+        # `resume` knows neither --sandbox nor --cd: same effect via -c, the folder is the current directory
+        options += ["-c", f'sandbox_mode="{sandbox}"'] if session else ["--sandbox", sandbox]
 
-        if a.konto_art == "login":
-            # Anmeldung der CLI selbst; eigene Einstellungen und Regeln des Nutzers bleiben draußen.
+        if a.account_kind == "login":
+            # The CLI's own sign-in; the user's own settings and rules stay out.
             if os.environ.get("CODEX_HOME"):
                 env["CODEX_HOME"] = os.environ["CODEX_HOME"]
-            optionen += ["--ignore-user-config", "--ignore-rules"]
-            modell_optionen = ["--model", ctx.modell]
+            options += ["--ignore-user-config", "--ignore-rules"]
+            model_options = ["--model", ctx.model]
         else:
             key_env = a.key_envs[0] if a.key_envs else "OMNI_AGENT_KEY"
-            if key_env in ctx.schluessel:
-                env[key_env] = ctx.schluessel[key_env]
-            env["CODEX_HOME"] = str(ctx.ordner / ".codex-home")  # eigene, leere Konfiguration
-            anbieter_toml = (
+            if key_env in ctx.key_values:
+                env[key_env] = ctx.key_values[key_env]
+            env["CODEX_HOME"] = str(ctx.folder / ".codex-home")  # own, empty configuration
+            provider_toml = (
                 '{ name = "%s", base_url = "%s", env_key = "%s", wire_api = "responses" }'
                 % (a.name, ctx.base_url, key_env)
             )
-            optionen += ["-c", f"model_provider={json.dumps(a.id)}", "-c", f"model_providers.{a.id}={anbieter_toml}"]
-            modell_optionen = ["--model", ctx.modell]
-        if aufwand:
-            optionen += ["-c", f"model_reasoning_effort={json.dumps(aufwand)}"]
+            options += ["-c", f"model_provider={json.dumps(a.id)}", "-c", f"model_providers.{a.id}={provider_toml}"]
+            model_options = ["--model", ctx.model]
+        if effort:
+            options += ["-c", f"model_reasoning_effort={json.dumps(effort)}"]
 
-        if sitzung:
-            argv = [exe, "exec", "resume", *optionen, *modell_optionen, sitzung, ctx.prompt]
+        if session:
+            argv = [exe, "exec", "resume", *options, *model_options, session, ctx.prompt]
         else:
-            argv = [exe, "exec", *optionen, "--cd", str(ctx.arbeitsordner), *modell_optionen, ctx.prompt]
-        return Befehl(argv=argv, env=env)
+            argv = [exe, "exec", *options, "--cd", str(ctx.work_dir), *model_options, ctx.prompt]
+        return Command(argv=argv, env=env)
 
-    def fortschritt(self, zeile: str, zustand: dict) -> list:
+    def progress(self, line: str, state: dict) -> list:
         try:
-            o = json.loads(zeile)
+            o = json.loads(line)
         except ValueError:
-            return [kurz(zeile, 160)] if zeile.strip() else []
+            return [shorten(line, 160)] if line.strip() else []
         if o.get("type") == "thread.started" and o.get("thread_id"):
-            zustand["sitzung"] = o["thread_id"]
+            state["session"] = o["thread_id"]
             return []
         item = o.get("item") or {}
-        art = item.get("type") or o.get("type") or ""
-        if art in ("command_execution", "file_change", "web_search", "mcp_tool_call") and o.get("type") == "item.started":
-            zustand["runden"] = zustand.get("runden", 0) + 1
-            return [f"Werkzeug {zustand['runden']}: {art}"]
-        if art == "agent_message" and item.get("text"):
-            zustand["ergebnis"] = item["text"]  # letzte Antwort: im Projektmodus wird daraus der Bericht
-            return [f"Agent: {kurz(item['text'])}"]
+        kind = item.get("type") or o.get("type") or ""
+        if kind in ("command_execution", "file_change", "web_search", "mcp_tool_call") and o.get("type") == "item.started":
+            state["turns"] = state.get("turns", 0) + 1
+            return [f"Tool {state['turns']}: {kind}"]
+        if kind == "agent_message" and item.get("text"):
+            state["final_answer"] = item["text"]  # last answer: in project mode it becomes the report
+            return [f"Agent: {shorten(item['text'])}"]
         return []

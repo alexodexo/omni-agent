@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Sicherheitslücke melden
+  - name: Report a security vulnerability
     url: https://github.com/alexodexo/omni-agent/security/advisories/new
-    about: Bitte nicht als öffentliches Issue, sondern vertraulich.
+    about: Please do not open a public issue; report it privately.

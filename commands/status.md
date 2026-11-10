@@ -1,10 +1,10 @@
 ---
-description: Zeigt die Omni-Agent-Läufe dieser Sitzung (oder aller) und den Stand eines Laufs
-argument-hint: '[lauf] [--alle]'
+description: Shows the Omni-Agent runs of this session (or all) and the state of one run
+argument-hint: '[run] [--all]'
 disable-model-invocation: true
 allowed-tools: Bash(omni-agent:*)
 ---
 
 !`omni-agent status --md $ARGUMENTS`
 
-Ohne Laufname: Gib die Tabelle unverändert aus, ohne zusätzlichen Text. Mit Laufname: Gib die Ausgabe vollständig und unverändert aus, ohne Zusammenfassung.
+Without a run name: output the table unchanged, with no extra text. With a run name: output the full text unchanged, without summary.

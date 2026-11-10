@@ -1,11 +1,11 @@
 ---
-description: Prüft, was für Omni-Agent da ist und was fehlt (Agent-CLIs, Schlüssel, Anmeldung, Passung, Review-Gate)
-argument-hint: '[--netz]'
+description: Checks what is available for Omni-Agent and what is missing (agent CLIs, keys, login, fit, review gate)
+argument-hint: '[--network]'
 disable-model-invocation: true
 allowed-tools: Bash(omni-agent:*)
 ---
 
 !`omni-agent doctor $ARGUMENTS`
 
-Fasse in wenigen Zeilen zusammen: Welche Agent-CLIs sind installiert? Für welche Anbieter ist ein Schlüssel gesetzt oder ein Login aktiv, und welcher Runner passt? Was blockiert einen Lauf, und was ist der nächste Schritt (`/omni-agent:setup`)?
-Nenne nie Schlüsselwerte. Die Ausgabe sagt nur „gesetzt" oder „fehlt".
+Summarize in a few lines: Which agent CLIs are installed? For which providers is a key set or a login active, and which runner fits? What blocks a run, and what is the next step (`/omni-agent:setup`)?
+Never state key values. The output only says "set" or "missing".

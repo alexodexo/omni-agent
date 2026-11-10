@@ -1,25 +1,36 @@
-# Änderungen
+# Changelog
+
+## 1.3.0
+
+- **Clean break: 1.3.0 keeps no compatibility with the German names.** Old subcommands, flags, hook names, tool names (`lesen`, `schreiben`, `web_suche`, `web_laden`), `an`/`aus`, env vars (`OMNI_AGENT_KONTO_<NAME>`, `OMNI_AGENT_LAUF`, `OMNI_AGENT_SITZUNG`, ...), config keys, `providers.json` keys and tier names, `konto-*.json`, old report file names and old run states are no longer read. Users on older versions set things up again.
+- **The whole plugin is English now.** Docs, command texts, CLI help and messages, prompts sent to models, report headings and the schema keys of `providers.json` are English.
+- **Renamed commands, flags, files, env vars and config keys.** For example `konto` is `account`, `nutzung` is `usage`, `warte` is `wait`, `anbieter` is `providers`; `--anbieter` is `--provider`, `--konto` is `--account`, `--projekt` is `--project`, `--schreibend` is `--write`, `--hintergrund` is `--background`, `--warten` is `--wait`, `--fortsetzen` is `--resume`. Env vars follow (`OMNI_AGENT_ACCOUNT_<NAME>`, `OMNI_AGENT_RUN`, `OMNI_AGENT_SESSION`), as do the `config.json` keys (`default_provider`, `review_gate_provider`, `review_gate_model`). Slash commands: `/omni-agent:accounts` and `/omni-agent:usage`.
+- **Subagent renamed to `omni-agent:worker`** (was `omni-agent:lauf`). The internal skills are now `omni-agent-runtime`, `omni-agent-task` and `omni-agent-results`.
+- **Report files renamed:** `report.md`, `task.md`, `error.log`, `console.log`, `changes.patch` (were `bericht.md`, `auftrag.md`, `fehler.log`, `konsole.log`, `aenderungen.patch`). The directories under `~/.omni-agent` are now `runs` and `accounts`.
+- **The code is English too.** Modules (`engine`, `providers`, `config`, `accounts`, `hooks`, `usage`), functions, variables and the `status.json` keys (`state`, `provider`, `model`, `turns`, ...). The accounts folder is not used any more; accounts live in `providers.d/account-<name>.json`. A static check (pyflakes) runs in CI next to the tests, on Python 3.9, 3.12 and 3.13.
+- **Run states** are `running`, `done`, `failed` and `cancelled`; `wait` and `result` start with `[still running]`, `[done]`, `[failed]` or `[cancelled]`.
+- **Review reports** use the headings `## Verdict` (`approve` or `needs-work`), `## Findings` with `[critical|high|medium|low]`, `Location:` and `Confidence:`. The agent answers in the language of the task.
 
 ## 1.2.0
 
-- **Projektmodus für jeden Anbieter.** Die Sperre für Fremdanbieter ist weg; `--projekt` und `--schreibend` gelten mit DeepSeek, Kimi, Ollama und allen anderen. Die Entscheidung, welche Daten wohin gehen, liegt bei der Nutzerin. Mit opencode wird die Schlussantwort jetzt ebenfalls zum Bericht.
-- **Nutzung und Guthaben:** `omni-agent nutzung` und `/omni-agent:nutzung`. Codex (Plan, Auslastung je Fenster, Reset, Guthaben, Reset-Gutschriften über `codex app-server`), DeepSeek, Kimi, OpenRouter und EUrouter (Guthaben), Claude-Konten wie bisher.
-- **Fernziele:** `omni-agent host add|list|remove|test|install|setup` und `--host NAME` für `run`, `status`, `result`, `cancel`, `warte`, `nutzung`, `doctor`. Läuft per ssh, auch über Tailscale. `/omni-agent:hosts`.
-- **Python 3.9** reicht jetzt (die Version, die macOS mitbringt).
+- **Project mode for every provider.** The block for third-party providers is gone; `--project` and `--write` apply with DeepSeek, Kimi, Ollama and all others. The decision which data goes where is the user's. With opencode, the final answer now also becomes the report.
+- **Usage and balance:** `omni-agent usage` and `/omni-agent:usage`. Codex (plan, usage per window, reset, credits, reset credits via `codex app-server`), DeepSeek, Kimi, OpenRouter and EUrouter (balance), Claude accounts as before.
+- **Remote targets:** `omni-agent host add|list|remove|test|install|setup` and `--host NAME` for `run`, `status`, `result`, `cancel`, `wait`, `usage`, `doctor`. Runs over ssh, also over Tailscale. `/omni-agent:hosts`.
+- **Python 3.9** is enough now (the version macOS ships).
 
 ## 1.1.1
 
-Größte Änderung seit dem Start: Omni-Agent arbeitet nach dem Vorbild des Codex-Plugins. **Bruchstelle:** Die Skills `run`, `review`, `status`, `doctor`, `setup` und `delegieren` sind Befehle bzw. der Subagent geworden. Aufrufe wie `/omni-agent:run` bleiben gleich, aber `run` startet jetzt über den Subagenten `omni-agent:lauf`, und Läufe starten losgelöst.
+Biggest change since the start: Omni-Agent now works on the model of the Codex plugin. **Breaking change:** The skills `run`, `review`, `status`, `doctor`, `setup` and `delegieren` became commands and the subagent. Calls such as `/omni-agent:run` stay the same, but `run` now starts through the subagent `omni-agent:worker`, and runs start detached.
 
-Neu:
+New:
 
-- **Subagent `omni-agent:lauf`** (dünner Weiterleiter). Claude kann ihn von selbst rufen, auch in `/goal`; der Hauptchat bleibt sauber, Claude Code meldet das Ende.
-- **Befehle** statt Skills: `run`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `konten`, `doctor`, `setup`. Status, Ergebnis, Abbrechen, Prüfen, Konten laufen ohne Modell dazwischen.
-- **Interne Skills** für Laufzeitvertrag, Auftrag schreiben und Ergebnisweitergabe.
-- **Losgelöste Läufe:** `omni-agent run --hintergrund` / `--warten SEK`, `omni-agent warte`. Läufe überleben das Ende des startenden Befehls.
-- **Sitzungen:** Hooks ordnen Läufe der Claude-Sitzung zu; `status`, `result`, `cancel` und `fortsetzbar` beziehen sich zuerst darauf. `SessionEnd` beendet noch laufende Läufe der Sitzung.
-- **Rückfrage „fortsetzen oder neu?"** bei `/omni-agent:run`.
-- **Projektmodus:** `--projekt` (nur lesen) und `--schreibend` für jeden Anbieter; Codex läuft dann in der Sandbox `read-only` bzw. `workspace-write`.
-- **Review-Vertrag:** festes Berichtsgerüst (Urteil, Befunde mit Schwere, Stelle, Sicherheit, Empfehlung, nächste Schritte); gegnerische Haltung nach Codex-Vorbild; bei sauberem Arbeitsbaum Branch gegen Hauptzweig.
-- **Review-Gate (aus):** `setup --review-gate an` prüft vor dem Beenden einer Sitzung neue Änderungen.
-- Statustabelle als Markdown (`status --md`).
+- **Subagent `omni-agent:worker`** (a thin forwarder). Claude can call it on its own, also in `/goal`; the main chat stays clean, and Claude Code reports the end.
+- **Commands** instead of skills: `run`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `accounts`, `doctor`, `setup`. Status, result, cancel, check and accounts run with no model in between.
+- **Internal skills** for the runtime contract, writing a task and passing on results.
+- **Detached runs:** `omni-agent run --background` / `--wait SEC`, `omni-agent wait`. Runs outlive the command that started them.
+- **Sessions:** hooks assign runs to the Claude session; `status`, `result`, `cancel` and `resumable` refer to it first. `SessionEnd` stops still-running runs of the session.
+- **Follow-up question "resume or start new?"** in `/omni-agent:run`.
+- **Project mode:** `--project` (read-only) and `--write` for every provider; Codex then runs in the sandbox `read-only` or `workspace-write`.
+- **Review contract:** fixed report skeleton (verdict, findings with severity, location, confidence, recommendation, next steps); adversarial stance modelled on Codex; with a clean working tree, branch against main branch.
+- **Review gate (off):** `setup --review-gate on` checks new changes before a session ends.
+- Status table as Markdown (`status --md`).

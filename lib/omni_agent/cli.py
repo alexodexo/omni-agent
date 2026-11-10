@@ -1,4 +1,4 @@
-"""Kommandozeile: omni-agent setup | doctor | run | status | anbieter | runner | extras."""
+"""Command line: omni-agent setup | doctor | run | status | providers | runners | extras."""
 from __future__ import annotations
 
 import argparse
@@ -12,20 +12,20 @@ import time
 from pathlib import Path
 
 from . import VERSION, extras
-from .anbieter import lade_anbieter
-from .konfig import (
-    EXIT_KONFIG, KonfigFehler, WURZEL, claude_sitzung, review_gate_an, setze_config, setze_standard_anbieter, standard_anbieter,
-    env_datei, hole_schluessel, home, lese_schluesseldatei, pruefe_erreichbar,
+from .providers import load_providers
+from .config import (
+    EXIT_CONFIG, ConfigError, ROOT, claude_session, review_gate_an, set_config, set_default_provider, default_provider,
+    env_file, get_key, home, read_key_file, check_reachable,
 )
-from .lauf import (
-    alle_laeufe, dauer_text, drucke_bericht, finde_lauf, fuehre_aus, laeufe_im_blick, lies_status, melde, pruefe_lebt,
-    prozess_ist_omni_agent, starte_losgeloest, warte_und_melde,
+from .engine import (
+    all_runs, duration_text, print_report, find_run, execute, runs_in_view, read_status, check_alive,
+    start_detached, wait_and_report,
 )
-from .runner import RUNNER, passt
+from .runner import RUNNER, fits
 
-SHIM_MARKE = "omni-agent-shim"
+SHIM_MARKER = "omni-agent-shim"
 SHIM = """#!/usr/bin/env python3
-# omni-agent-shim: findet die installierte Plugin-Version, auch nach Updates (Aufruf ändert sich nie)
+# omni-agent-shim: finds the installed plugin version, even after updates (the call never changes)
 import glob, json, os, sys
 home = os.path.expanduser("~")
 ziel = None
@@ -41,654 +41,667 @@ if ziel is None:
     treffer = glob.glob(os.path.join(home, ".claude", "plugins", "cache", "omni-agent", "omni-agent", "*", "bin", "omni-agent"))
     ziel = max(treffer, key=os.path.getmtime) if treffer else None
 if ziel is None:
-    sys.exit("omni-agent: Plugin nicht gefunden. Installieren: claude plugin install omni-agent@omni-agent")
+    sys.exit("omni-agent: plugin not found. Install it with: claude plugin install omni-agent@omni-agent")
 os.execv(sys.executable, [sys.executable, ziel] + sys.argv[1:])
 """
 
-ENV_VORLAGE = """# Omni-Agent: Schlüssel. Eine Zeile je Anbieter, Format NAME=wert, keine Anführungszeichen nötig.
-# Diese Datei bleibt auf deinem Rechner (Rechte 600). Nie in Git, nie in einen Chat kopieren.
-# Alternativ die Variable in der Shell setzen (export NAME=wert), die Umgebung hat Vorrang.
+ENV_TEMPLATE = """# Omni-Agent: keys. One line per provider, format NAME=value, no quotes needed.
+# This file stays on your machine (mode 600). Never commit it, never paste it into a chat.
+# Alternatively set the variable in the shell (export NAME=value); the environment takes precedence.
 #
 # DEEPSEEK_API_KEY=
 # OPENROUTER_API_KEY=
 # MOONSHOT_API_KEY=
 # EUROUTER_API_KEY=
 # NVIDIA_API_KEY=
-# ANTHROPIC_API_KEY=            # Claude mit anderem Konto (empfohlen: API-Schlüssel)
-# CLAUDE_CODE_OAUTH_TOKEN=      # Abo-Token: Bedingungen für unbeaufsichtigte Läufe nicht belegt
-# Ollama (lokal) braucht keinen Schlüssel.
+# ANTHROPIC_API_KEY=            # Claude with another account (recommended: API key)
+# CLAUDE_CODE_OAUTH_TOKEN=      # Subscription token: terms for unattended runs are not documented
+# Ollama (local) needs no key.
 """
-
 
 # ---------- doctor ----------
 
-def _login_status(anbieter) -> str:
-    """Anmeldung der Agent-CLI (z. B. `codex login status`). Kein Geheimnis wird gelesen oder gezeigt."""
-    runner = RUNNER.get(anbieter.runner_zwang or "")
-    exe = runner.pfad() if runner else None
+def _login_status(provider) -> str:
+    """Login state of the agent CLI (e.g. `codex login status`). No secret is read or shown."""
+    runner = RUNNER.get(provider.runner_only or "")
+    exe = runner.file_path() if runner else None
     if not exe:
-        return "CLI fehlt"
+        return "CLI missing"
     try:
-        erg = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=20)
+        res = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
-        return "unbekannt"
-    return "angemeldet" if erg.returncode == 0 and "logged in" in (erg.stdout + erg.stderr).lower() else "NICHT angemeldet"
+        return "unknown"
+    return "logged in" if res.returncode == 0 and "logged in" in (res.stdout + res.stderr).lower() else "NOT logged in"
 
 
 def cmd_doctor(args) -> int:
     ok = True
-    print(f"Omni-Agent {VERSION}, Python {sys.version_info.major}.{sys.version_info.minor}, Ordner {home()}")
-    pfad = env_datei()
-    if pfad.exists():
-        zu_offen = bool(pfad.stat().st_mode & 0o077)
-        print(f"Schlüsseldatei: {pfad} ({'RECHTE ZU OFFEN, chmod 600' if zu_offen else 'Rechte ok'})")
-        ok = ok and not zu_offen
+    print(f"Omni-Agent {VERSION}, Python {sys.version_info.major}.{sys.version_info.minor}, folder {home()}")
+    file_path = env_file()
+    if file_path.exists():
+        too_open = bool(file_path.stat().st_mode & 0o077)
+        print(f"Key file: {file_path} ({'PERMISSIONS TOO OPEN, chmod 600' if too_open else 'permissions ok'})")
+        ok = ok and not too_open
     else:
-        print(f"Schlüsseldatei: fehlt ({pfad}). Anlegen mit: omni-agent setup")
+        print(f"Key file: missing ({file_path}). Create it with: omni-agent setup")
     try:
-        datei = lese_schluesseldatei()
-    except KonfigFehler as fehler:
-        print(f"  {fehler}")
-        datei, ok = {}, False
+        data_file = read_key_file()
+    except ConfigError as exc:
+        print(f"  {exc}")
+        data_file, ok = {}, False
 
-    print("\nRunner (Agent-CLIs):")
+    print("\nRunners (agent CLIs):")
     for r in RUNNER.values():
         v = r.version()
-        marke = "EXPERIMENTELL, " if r.experimentell else ""
-        print(f"  {r.name:<9} {'installiert ' + str(v) if v else 'nicht installiert':<42} {marke}spricht {', '.join(r.protokolle)}")
-    if not any(r.pfad() for r in RUNNER.values() if not r.experimentell):
-        print("  -> Mindestens eine Agent-CLI installieren (Standard: Claude Code).")
+        marker = "EXPERIMENTAL, " if r.experimental else ""
+        print(f"  {r.name:<9} {'installed ' + str(v) if v else 'not installed':<42} {marker}speaks {', '.join(r.protocols)}")
+    if not any(r.file_path() for r in RUNNER.values() if not r.experimental):
+        print("  -> Install at least one agent CLI (default: Claude Code).")
         ok = False
 
-    print("\nAnbieter:")
-    anbieter = lade_anbieter()
-    print(f"  {'Anbieter':<14}{'Schlüssel':<13}{'Region':<20}{'geprüft':<9}passende Runner")
-    for a in anbieter.values():
-        if a.konto_art == "login":
+    print("\nProviders:")
+    provider = load_providers()
+    print(f"  {'Provider':<16}{'Key':<13}{'Region':<20}{'Verified':<9}Matching runners")
+    for a in provider.values():
+        if a.account_kind == "login":
             key = _login_status(a)
-        elif not a.braucht_schluessel:
-            key = "nicht nötig"
+        elif not a.needs_key:
+            key = "not needed"
         else:
-            key = "gesetzt" if any(hole_schluessel(n, datei) for n in a.key_envs) else "fehlt"
-        passende = [n for n, r in RUNNER.items() if passt(a, r)]
-        via = [n for n, r in RUNNER.items() if passt(a, r, True) and n not in passende]
-        zeile = ", ".join(passende) or "-"
+            key = "set" if any(get_key(n, data_file) for n in a.key_envs) else "missing"
+        matching = [n for n, r in RUNNER.items() if fits(a, r)]
+        via = [n for n, r in RUNNER.items() if fits(a, r, True) and n not in matching]
+        line = ", ".join(matching) or "-"
         if via:
-            zeile += f"  (+ {', '.join(via)} über LiteLLM)"
-        installiert = [n for n in passende if RUNNER[n].pfad()]
-        zeile += "" if installiert else "   [keiner davon installiert]"
-        print(f"  {a.id:<14}{key:<13}{a.region:<20}{'ja' if a.geprueft else 'nein':<9}{zeile}")
-        if args.netz and a.base_url and (key != "fehlt"):
+            line += f"  (+ {', '.join(via)} via LiteLLM)"
+        installed = [n for n in matching if RUNNER[n].file_path()]
+        line += "" if installed else "   [none of them installed]"
+        print(f"  {a.id:<16}{key:<13}{a.region:<20}{'yes' if a.verified else 'no':<9}{line}")
+        if args.network and a.base_url and (key != "missing"):
             try:
-                pruefe_erreichbar(a.base_url, 4)
-                print(f"      Endpunkt erreichbar: {a.base_url}")
-            except KonfigFehler as fehler:
-                print(f"      Endpunkt NICHT erreichbar: {fehler}")
-    print(f"\nReview-Gate: {'AN' if review_gate_an() else 'aus'} | Standard-Anbieter: {standard_anbieter() or 'keiner'} | Claude-Sitzung: {claude_sitzung() or 'nicht erkannt (Hook läuft nur in Claude Code)'}")
+                check_reachable(a.base_url, 4)
+                print(f"      Endpoint reachable: {a.base_url}")
+            except ConfigError as exc:
+                print(f"      Endpoint NOT reachable: {exc}")
+    print(f"\nReview gate: {'ON' if review_gate_an() else 'off'} | Default provider: {default_provider() or 'none'} | Claude session: {claude_session() or 'not detected (the hook only runs inside Claude Code)'}")
     print(f"\n{extras.status_text()}")
-    print("\nHinweis: 'geprüft: nein' heißt laut Herstellerdoku gebaut, nicht live ausprobiert. Datenort je Anbieter: omni-agent anbieter")
-    return 0 if ok else EXIT_KONFIG
+    print("\nNote: 'Verified: no' means built from the vendor docs, not tried live. Data location per provider: omni-agent providers")
+    return 0 if ok else EXIT_CONFIG
 
 
 # ---------- setup ----------
 
 def cmd_setup(args) -> int:
-    basis = home()
-    basis.mkdir(parents=True, exist_ok=True)
-    os.chmod(basis, 0o700)
-    datei = env_datei()
-    if not datei.exists():
-        fd = os.open(datei, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    head_text = home()
+    head_text.mkdir(parents=True, exist_ok=True)
+    os.chmod(head_text, 0o700)
+    data_file = env_file()
+    if not data_file.exists():
+        fd = os.open(data_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(ENV_VORLAGE)
-        print(f"Schlüsseldatei angelegt: {datei} (Rechte 600)")
+            f.write(ENV_TEMPLATE)
+        print(f"Key file created: {data_file} (mode 600)")
     else:
-        os.chmod(datei, 0o600)
-        print(f"Schlüsseldatei vorhanden: {datei}")
+        os.chmod(data_file, 0o600)
+        print(f"Key file exists: {data_file}")
 
-    bin_ziel = Path.home() / ".local" / "bin"
-    link = bin_ziel / "omni-agent"
-    vorhanden = shutil.which("omni-agent")
-    unsere_datei = link.is_symlink() or (link.is_file() and SHIM_MARKE in link.read_text(encoding="utf-8", errors="ignore"))
-    if unsere_datei or not vorhanden:
+    bin_target = Path.home() / ".local" / "bin"
+    link = bin_target / "omni-agent"
+    existing = shutil.which("omni-agent")
+    our_file = link.is_symlink() or (link.is_file() and SHIM_MARKER in link.read_text(encoding="utf-8", errors="ignore"))
+    if our_file or not existing:
         try:
-            bin_ziel.mkdir(parents=True, exist_ok=True)
+            bin_target.mkdir(parents=True, exist_ok=True)
             if link.is_symlink() or link.exists():
                 link.unlink()
             link.write_text(SHIM, encoding="utf-8")
             os.chmod(link, 0o755)
-            print(f"Befehl eingerichtet: {link} (folgt automatisch der installierten Plugin-Version)")
-            if str(bin_ziel) not in os.environ.get("PATH", "").split(os.pathsep):
-                print(f"Hinweis: {bin_ziel} ist nicht im PATH. In die Shell-Konfiguration: export PATH=\"$HOME/.local/bin:$PATH\"")
-        except OSError as fehler:
-            print(f"Befehl konnte nicht eingerichtet werden ({fehler}). Direkt aufrufen: {WURZEL / 'bin' / 'omni-agent'}")
+            print(f"Command installed: {link} (follows the installed plugin version automatically)")
+            if str(bin_target) not in os.environ.get("PATH", "").split(os.pathsep):
+                print(f"Note: {bin_target} is not in PATH. Add to your shell config: export PATH=\"$HOME/.local/bin:$PATH\"")
+        except OSError as exc:
+            print(f"Could not install the command ({exc}). Call it directly: {ROOT / 'bin' / 'omni-agent'}")
     else:
-        print(f"Befehl 'omni-agent' ist im PATH: {vorhanden}")
+        print(f"Command 'omni-agent' is on PATH: {existing}")
 
-    if args.anbieter:
-        a = lade_anbieter().get(args.anbieter)
+    if args.provider:
+        a = load_providers().get(args.provider)
         if not a:
-            raise KonfigFehler(f"Unbekannter Anbieter '{args.anbieter}'")
-        print(f"\nAnbieter {a.name} ({a.id})")
-        if a.braucht_schluessel:
-            print(f"  1. Öffne {datei} in deinem Editor (nicht im Chat).")
-            print(f"  2. Trage eine Zeile ein:  {a.key_envs[0]}=dein-schlüssel")
-            print(f"  3. Prüfen: omni-agent doctor")
+            raise ConfigError(f"Unknown provider '{args.provider}'")
+        print(f"\nProvider {a.name} ({a.id})")
+        if a.needs_key:
+            print(f"  1. Open {data_file} in your editor (not in the chat).")
+            print(f"  2. Add a line:  {a.key_envs[0]}=your-key")
+            print("  3. Check: omni-agent doctor")
         else:
-            print("  Kein Schlüssel nötig. Läuft der Dienst? Prüfen: omni-agent doctor --netz")
-        print(f"  Datenort: {a.region}. {a.hinweis}")
+            print("  No key needed. Is the service running? Check: omni-agent doctor --network")
+        print(f"  Data location: {a.region}. {a.note}")
     else:
-        print("\nNächste Schritte:\n  1. Anbieter wählen (omni-agent anbieter) und Schlüssel in die Datei eintragen: omni-agent setup --anbieter deepseek")
-        print("  2. Prüfen: omni-agent doctor")
-        print("  3. Erster Lauf: omni-agent run --text \"Fasse in drei Sätzen zusammen, was ein Hintergrund-Agent ist\" --anbieter deepseek")
-    if args.review_gate == "an":
-        if not standard_anbieter():
-            raise KonfigFehler("Review-Gate braucht einen Anbieter: erst `omni-agent konto standard NAME` setzen.")
-        setze_config("review_gate", True)
-        print(f"Review-Gate AN: Vor dem Beenden einer Claude-Sitzung wird jeder neue Diff ungeprüfter Änderungen an {standard_anbieter()} gesendet "
-              "(Kosten und Datenabfluss beachten). Aus: omni-agent setup --review-gate aus")
-    elif args.review_gate == "aus":
-        setze_config("review_gate", None)
-        print("Review-Gate AUS.")
-    if args.oeffnen:
-        os.system(f"open -t {datei}" if sys.platform == "darwin" else f"${{EDITOR:-nano}} {datei}")
+        print("\nNext steps:\n  1. Pick a provider (omni-agent providers) and add its key to the file: omni-agent setup --provider deepseek")
+        print("  2. Check: omni-agent doctor")
+        print("  3. First run: omni-agent run --text \"Summarize in three sentences what a background agent is\" --provider deepseek")
+    if args.review_gate == "on":
+        if not default_provider():
+            raise ConfigError("The review gate needs a provider: first set one with `omni-agent account default NAME`.")
+        set_config("review_gate", True)
+        print(f"Review gate ON: before a Claude session ends, every new diff of unreviewed changes is sent to {default_provider()} "
+              "(mind cost and data leaving your machine). Off: omni-agent setup --review-gate off")
+    elif args.review_gate == "off":
+        set_config("review_gate", None)
+        print("Review gate OFF.")
+    if args.open_flag:
+        os.system(f"open -t {data_file}" if sys.platform == "darwin" else f"${{EDITOR:-nano}} {data_file}")
     print()
-    return cmd_doctor(argparse.Namespace(netz=False))
+    return cmd_doctor(argparse.Namespace(network=False))
 
 
 # ---------- run ----------
 
 def cmd_run(args) -> int:
-    if args.konto and args.anbieter:
-        raise KonfigFehler("--konto und --anbieter schließen sich aus.")
-    if args.konto:
-        from .konten import konto_id
-        args.anbieter = konto_id(args.konto)
-    if not args.anbieter and args.fortsetzen is None:
-        args.anbieter = standard_anbieter()
-        if not args.anbieter:
-            raise KonfigFehler(
-                "Kein Anbieter angegeben und kein Standard gesetzt. Entweder --anbieter/--konto nennen "
-                "oder einen Standard festlegen: omni-agent konto standard NAME"
+    if args.account and args.provider:
+        raise ConfigError("--account and --provider are mutually exclusive.")
+    if args.account:
+        from .accounts import account_id
+        args.provider = account_id(args.account)
+    if not args.provider and args.resume is None:
+        args.provider = default_provider()
+        if not args.provider:
+            raise ConfigError(
+                "No provider given and no default set. Either pass --provider/--account "
+                "or set a default: omni-agent account default NAME"
             )
-        print(f"Kein Anbieter angegeben, Standard: {args.anbieter}")
-    if args.fortsetzen is not None and args.text is None and not args.auftrag:
-        raise KonfigFehler("--fortsetzen braucht die Nachfrage: --text \"…\"")
-    if args.hintergrund or args.warten is not None:
-        return starte_losgeloest(_ohne_flags(args._argv), args.warten)
-    return fuehre_aus(args)
+        print(f"No provider given, default: {args.provider}")
+    if args.resume is not None and args.text is None and not args.task:
+        raise ConfigError("--resume needs the follow-up: --text \"...\"")
+    if args.background or args.wait_seconds is not None:
+        return start_detached(_without_flags(args._argv), args.wait_seconds)
+    return execute(args)
 
 
-def _ohne_flags(argv: list) -> list:
-    """Die Argumente des Befehls ohne --hintergrund/--warten (für den losgelösten Kindprozess)."""
-    aus, i = [], 0
+def _without_flags(argv: list) -> list:
+    """The command's arguments without --background/--wait (for the detached child process)."""
+    out, i = [], 0
     while i < len(argv):
         a = argv[i]
-        if a == "--hintergrund":
+        if a == "--background":
             i += 1
-        elif a == "--warten":
+        elif a == "--wait":
             i += 2
-        elif a.startswith("--warten="):
+        elif a.startswith("--wait="):
             i += 1
         else:
-            aus.append(a)
+            out.append(a)
             i += 1
-    return aus
+    return out
 
 
 # ---------- review / cancel / result ----------
 
 def cmd_review(args) -> int:
-    from .review import fuehre_review_aus
-    if args.konto and args.anbieter:
-        raise KonfigFehler("--konto und --anbieter schließen sich aus.")
-    if args.konto:
-        from .konten import konto_id
-        args.anbieter = konto_id(args.konto)
-    if not args.anbieter:
-        args.anbieter = standard_anbieter()
-        if not args.anbieter:
-            raise KonfigFehler("Kein Anbieter angegeben und kein Standard gesetzt (--konto/--anbieter oder: omni-agent konto standard NAME)")
-        print(f"Kein Anbieter angegeben, Standard: {args.anbieter}")
-    if (args.hintergrund or args.warten is not None) and not args.vorschau:
-        return starte_losgeloest(_ohne_flags(args._argv), args.warten)
-    return fuehre_review_aus(args)
+    from .review import run_review
+    if args.account and args.provider:
+        raise ConfigError("--account and --provider are mutually exclusive.")
+    if args.account:
+        from .accounts import account_id
+        args.provider = account_id(args.account)
+    if not args.provider:
+        args.provider = default_provider()
+        if not args.provider:
+            raise ConfigError("No provider given and no default set (--account/--provider or: omni-agent account default NAME)")
+        print(f"No provider given, default: {args.provider}")
+    if (args.background or args.wait_seconds is not None) and not args.preview:
+        return start_detached(_without_flags(args._argv), args.wait_seconds)
+    return run_review(args)
 
 
 def cmd_cancel(args) -> int:
-    if args.lauf:
-        ordner = finde_lauf(args.lauf)
+    if args.run_name:
+        folder = find_run(args.run_name)
     else:
-        laufende = [p for p in laeufe_im_blick() if (lies_status(p) or {}).get("zustand") == "arbeitet"]
-        if not laufende:
-            print("Kein Lauf arbeitet gerade.")
+        active = [p for p in runs_in_view() if (read_status(p) or {}).get("state") == "running"]
+        if not active:
+            print("No run is active.")
             return 0
-        ordner = laufende[0]
-    war_arbeitend = (lies_status(ordner) or {}).get("zustand") == "arbeitet"
-    status = pruefe_lebt(ordner)
-    if status.get("zustand") != "arbeitet":
-        if war_arbeitend:
-            print(f"{ordner.name}: Prozess war schon weg, Status auf 'fehler' gesetzt.")
+        folder = active[0]
+    was_running = (read_status(folder) or {}).get("state") == "running"
+    status = check_alive(folder)
+    if status.get("state") != "running":
+        if was_running:
+            print(f"{folder.name}: process was already gone, state set to 'failed'.")
         else:
-            print(f"{ordner.name}: läuft nicht ({status.get('zustand', 'unbekannt')}).")
+            print(f"{folder.name}: not running ({status.get('state', 'unknown')}).")
         return 0
     os.kill(int(status["pid"]), signal.SIGTERM)
     for _ in range(40):
         time.sleep(0.5)
-        if (lies_status(ordner) or {}).get("zustand") != "arbeitet":
-            print(f"{ordner.name}: abgebrochen.")
+        if (read_status(folder) or {}).get("state") != "running":
+            print(f"{folder.name}: cancelled.")
             return 0
-    print(f"{ordner.name}: Abbruch angefordert, der Lauf beendet sich noch.")
+    print(f"{folder.name}: cancel requested, the run is still shutting down.")
     return 0
 
 
 def cmd_result(args) -> int:
-    if args.lauf:
-        ordner = finde_lauf(args.lauf)
+    if args.run_name:
+        folder = find_run(args.run_name)
     else:
-        mit_bericht = [p for p in laeufe_im_blick() if (p / "bericht.md").is_file()]
-        if not mit_bericht:
-            raise KonfigFehler("Noch kein Lauf mit Bericht. Läufe: omni-agent status")
-        ordner = mit_bericht[0]
-    bericht = ordner / "bericht.md"
-    status = pruefe_lebt(ordner)
-    if not bericht.is_file():
-        raise KonfigFehler(f"{ordner.name}: kein Bericht ({status.get('zustand', 'unbekannt')}). Siehe: omni-agent status {ordner.name}")
-    if args.pfad:
-        print(bericht)
+        with_report = [p for p in runs_in_view() if (p / "report.md").is_file()]
+        if not with_report:
+            raise ConfigError("No run with a report yet. Runs: omni-agent status")
+        folder = with_report[0]
+    report = folder / "report.md"
+    status = check_alive(folder)
+    if not report.is_file():
+        raise ConfigError(f"{folder.name}: no report ({status.get('state', 'unknown')}). See: omni-agent status {folder.name}")
+    if args.file_path:
+        print(report)
         return 0
-    if status.get("zustand") == "arbeitet":
-        print("[Lauf arbeitet noch, dies ist ein Zwischenstand]\n")
-    drucke_bericht(ordner, status)
+    if status.get("state") == "running":
+        print("[still running] This is an interim report.\n")
+    print_report(folder, status)
     return 0
 
 
-def cmd_warte(args) -> int:
-    """Wartet auf einen Lauf (höchstens --max Sekunden) und meldet den Stand; für Weiterleiter, die Läufe losgelöst starten."""
-    return warte_und_melde(finde_lauf(args.lauf), args.max)
+def cmd_wait(args) -> int:
+    """Waits for a run (at most --max seconds) and reports its state; for forwarders that start runs detached."""
+    return wait_and_report(find_run(args.run_name), args.max)
 
 
-def cmd_fortsetzbar(args) -> int:
-    """Gibt es einen Lauf dieser Claude-Sitzung, an den eine Nachfrage gehen könnte? (Für die Rückfrage „fortsetzen oder neu“.)"""
-    sitzung = claude_sitzung()
-    kandidaten = alle_laeufe(sitzung) if sitzung else []
-    for ordner in kandidaten:
-        status = pruefe_lebt(ordner)
-        if status.get("sitzung") and status.get("zustand") in ("fertig", "fehler", "abgebrochen") and status.get("art", "run") == "run":
-            antwort = {"available": True, "lauf": ordner.name, "anbieter": status.get("anbieter"), "modell": status.get("modell"),
-                       "zustand": status.get("zustand"), "auftrag": status.get("auftrag")}
+def cmd_resumable(args) -> int:
+    """Is there a run of this Claude session that a follow-up could go to? (For the "resume or start new" question.)"""
+    session = claude_session()
+    candidates = all_runs(session) if session else []
+    for folder in candidates:
+        status = check_alive(folder)
+        if status.get("session") and status.get("state") in ("done", "failed", "cancelled") and status.get("kind", "run") == "run":
+            response = {"available": True, "run": folder.name, "provider": status.get("provider"), "model": status.get("model"),
+                       "state": status.get("state"), "task": status.get("task")}
             break
     else:
-        antwort = {"available": False}
-    print(json.dumps(antwort, ensure_ascii=False))
+        response = {"available": False}
+    print(json.dumps(response, ensure_ascii=False))
     return 0
 
 
 # ---------- status ----------
 
-def _zeile(ordner: Path) -> dict:
-    s = pruefe_lebt(ordner)
-    return {"lauf": ordner.name, "zustand": s.get("zustand", "unbekannt"), "art": s.get("art", "run"), "anbieter": s.get("anbieter"),
-            "modell": s.get("modell"), "runden": s.get("runden"), "dauer": dauer_text(s), "auftrag": s.get("auftrag") or "",
-            "fortsetzbar": bool(s.get("sitzung")), "projekt": s.get("projekt")}
+def _line(folder: Path) -> dict:
+    s = check_alive(folder)
+    return {"run": folder.name, "state": s.get("state", "unknown"), "kind": s.get("kind", "run"), "provider": s.get("provider"),
+            "model": s.get("model"), "turns": s.get("turns"), "duration": duration_text(s), "task": s.get("task") or "",
+            "resumable": bool(s.get("session")), "project": s.get("project")}
+
+
+STATUS_LABELS = (("state", "State"), ("kind", "Kind"), ("provider", "Provider"), ("model", "Model"), ("runner", "Runner"),
+                 ("turns", "Turns"), ("exitcode", "Exit code"), ("remark", "Note"), ("project", "Project"), ("task", "Task"))
 
 
 def cmd_status(args) -> int:
-    if args.lauf:
-        ordner = finde_lauf(args.lauf)
-        status = pruefe_lebt(ordner) or {"zustand": "unbekannt"}
+    if args.run_name:
+        folder = find_run(args.run_name)
+        status = check_alive(folder) or {"state": "unknown"}
+        report = folder / "report.md"
         if args.json:
-            print(json.dumps({**status, "ordner": str(ordner), "bericht": str(ordner / "bericht.md") if (ordner / "bericht.md").exists() else None}, ensure_ascii=False))
+            print(json.dumps({**status, "folder": str(folder), "report": str(report) if report.exists() else None}, ensure_ascii=False))
         else:
-            print(f"Lauf:    {ordner}")
-            for k in ("zustand", "art", "anbieter", "modell", "runner", "runden", "exitcode", "bemerkung", "projekt", "auftrag"):
+            print(f"{'Run:':<12}{folder}")
+            for k, label in STATUS_LABELS:
                 if status.get(k) is not None:
-                    print(f"{k.capitalize() + ':':<9}{status[k]}")
-            print(f"Dauer:   {dauer_text(status)}")
-            print(f"Bericht: {ordner / 'bericht.md' if (ordner / 'bericht.md').exists() else 'noch nicht da'}")
-            if status.get("sitzung"):
-                print("Fortsetzbar: ja (omni-agent run --fortsetzen LAUF --text \"Nachfrage\")")
-            if status.get("zustand") == "arbeitet":
-                print("Abbrechen: omni-agent cancel " + ordner.name)
+                    print(f"{label + ':':<12}{status[k]}")
+            print(f"{'Duration:':<12}{duration_text(status)}")
+            print(f"{'Report:':<12}{report if report.exists() else 'not there yet'}")
+            if status.get("session"):
+                print("Resumable: yes (omni-agent run --resume RUN --text \"follow-up\")")
+            if status.get("state") == "running":
+                print("Cancel: omni-agent cancel " + folder.name)
         return 0
-    sitzung = claude_sitzung()
-    quelle = alle_laeufe() if args.alle or not sitzung else (alle_laeufe(sitzung) or alle_laeufe())
-    zeilen = [_zeile(p) for p in quelle[: args.anzahl]]
+    session = claude_session()
+    source = all_runs() if args.show_all or not session else (all_runs(session) or all_runs())
+    lines = [_line(p) for p in source[: args.limit]]
     if args.json:
-        print(json.dumps(zeilen, ensure_ascii=False))
+        print(json.dumps(lines, ensure_ascii=False))
         return 0
-    if not zeilen:
-        print("Noch keine Läufe.")
+    if not lines:
+        print("No runs yet.")
         return 0
     if args.md:
-        print("| Lauf | Zustand | Anbieter / Modell | Dauer | Auftrag |\n|---|---|---|---|---|")
-        for z in zeilen:
-            auftrag = z["auftrag"][:70].replace("|", "/")
-            print(f"| `{z['lauf']}` | {z['zustand']}{' (Review)' if z['art'] == 'review' else ' (Gate)' if z['art'] == 'gate' else ''} | "
-                  f"{z['anbieter'] or '-'} / {z['modell'] or '-'} | {z['dauer'] or '-'} | {auftrag} |")
-        print("\nBericht: `omni-agent result LAUF` · Abbrechen: `omni-agent cancel LAUF` · Nachfrage: `omni-agent run --fortsetzen LAUF --text \"…\"`")
+        print("| Run | State | Provider / Model | Duration | Task |\n|---|---|---|---|---|")
+        for z in lines:
+            task = z["task"][:70].replace("|", "/")
+            print(f"| `{z['run']}` | {z['state']}{' (review)' if z['kind'] == 'review' else ' (gate)' if z['kind'] == 'gate' else ''} | "
+                  f"{z['provider'] or '-'} / {z['model'] or '-'} | {z['duration'] or '-'} | {task} |")
+        print("\nReport: `omni-agent result RUN` · Cancel: `omni-agent cancel RUN` · Follow-up: `omni-agent run --resume RUN --text \"...\"`")
         return 0
-    for z in zeilen:
-        print(f"{z['lauf']:<34}{z['zustand']:<12}{(z['anbieter'] or '-') + ' / ' + (z['modell'] or '-'):<44}{z['dauer']}")
+    for z in lines:
+        print(f"{z['run']:<34}{z['state']:<12}{(z['provider'] or '-') + ' / ' + (z['model'] or '-'):<44}{z['duration']}")
     return 0
 
 
 def cmd_hook(args) -> int:
-    from .haken import fuehre_haken_aus
-    return fuehre_haken_aus(args.name)
+    from .hooks import run_hook
+    return run_hook(args.name)
 
 
-# ---------- konto ----------
+# ---------- account ----------
 
-def cmd_konto(args) -> int:
-    from . import konten
-    if args.aktion == "standard":
-        if args.loeschen:
-            setze_standard_anbieter(None)
-            print("Standard entfernt: ohne --anbieter läuft nichts mehr.")
+def cmd_account(args) -> int:
+    from . import accounts
+    if args.operation == "default":
+        if args.delete:
+            set_default_provider(None)
+            print("Default removed: nothing runs without --provider any more.")
         elif args.name:
-            kid = konten.konto_id(args.name)
-            if kid not in lade_anbieter():
-                raise KonfigFehler(f"Konto '{args.name}' gibt es nicht. Vorhandene: omni-agent konto list")
-            setze_standard_anbieter(kid)
-            print(f"Standard ist jetzt {kid}: `omni-agent run …` ohne --anbieter nutzt dieses Konto.")
+            acc_id = accounts.account_id(args.name)
+            if acc_id not in load_providers():
+                raise ConfigError(f"Account '{args.name}' does not exist. Existing: omni-agent account list")
+            set_default_provider(acc_id)
+            print(f"Default is now {acc_id}: `omni-agent run ...` without --provider uses this account.")
         else:
-            print(f"Standard: {standard_anbieter() or 'keiner gesetzt'}")
+            print(f"Default: {default_provider() or 'none set'}")
         return 0
-    if args.aktion == "list":
-        alle = konten.liste()
-        if not alle:
-            print("Noch kein benanntes Konto. Anlegen: omni-agent konto add NAME --art api|token")
+    if args.operation == "list":
+        show_all = accounts.list_items()
+        if not show_all:
+            print("No named account yet. Add one: omni-agent account add NAME --kind api|token")
             return 0
-        for k in alle:
-            std = "  [STANDARD]" if k["id"] == standard_anbieter() else ""
-            print(f"{k['name']:<12} --anbieter {k['id']:<18} {konten.ARTEN[k['art']][1]}{std}")
-            print(f"{'':<12} Schlüssel {k['schluessel']} ({k['env']})")
-            if not args.ohne_nutzung:
-                print(f"{'':<12} Nutzung: {konten.nutzung(k)}")
-        if not args.ohne_nutzung:
-            print("\nNutzung = eine Ein-Token-Anfrage je Konto an api.anthropic.com (Haiku); --ohne-nutzung überspringt sie.")
+        for k in show_all:
+            std = "  [DEFAULT]" if k["id"] == default_provider() else ""
+            print(f"{k['name']:<12} --provider {k['id']:<18} {accounts.KINDS[k['kind']][1]}{std}")
+            print(f"{'':<12} Key {k['key_values']} ({k['env']})")
+            if not args.no_usage:
+                print(f"{'':<12} Usage: {accounts.usage(k)}")
+        if not args.no_usage:
+            print("\nUsage = one one-token request per account to api.anthropic.com (Haiku); --no-usage skips it.")
         return 0
     if not args.name:
-        raise KonfigFehler("Bitte einen Kontonamen angeben, z. B.: omni-agent konto add felipe --art token")
-    if args.aktion == "remove":
-        konten.entferne(args.name, args.mit_schluessel)
-        print(f"Konto '{args.name}' entfernt." + (" Schlüsselzeile gelöscht." if args.mit_schluessel else f" Die Zeile {konten.konto_env(args.name)} in der Schlüsseldatei bleibt (--mit-schluessel löscht sie)."))
+        raise ConfigError("Please give an account name, e.g.: omni-agent account add felipe --kind token")
+    if args.operation == "remove":
+        accounts.remove_entry(args.name, args.with_key)
+        print(f"Account '{args.name}' removed." + (" Key line deleted." if args.with_key else f" The line {accounts.account_env(args.name)} in the key file stays (--with-key deletes it)."))
         return 0
     # add
-    pfad = konten.lege_an(args.name, args.art, args.titel, args.ersetzen)
-    env = konten.konto_env(args.name)
-    print(f"Konto '{args.name}' angelegt ({pfad.name}). Aufruf: --anbieter {konten.konto_id(args.name)}")
-    if args.uebernehme:
-        konten.benenne_schluessel_um(args.uebernehme, env)
-        print(f"Schlüssel aus {args.uebernehme} übernommen, jetzt unter {env}.")
+    file_path = accounts.create(args.name, args.kind, args.title, args.overwrite)
+    env = accounts.account_env(args.name)
+    print(f"Account '{args.name}' created ({file_path.name}). Use it with: --provider {accounts.account_id(args.name)}")
+    if args.adopt:
+        accounts.rename_key(args.adopt, env)
+        print(f"Key adopted from {args.adopt}, now stored as {env}.")
     elif sys.stdin.isatty():
         import getpass
-        wert = getpass.getpass(f"{konten.ARTEN[args.art][1]} für '{args.name}' (Eingabe unsichtbar, Enter überspringt): ").strip()
-        if wert:
-            konten.setze_schluessel(env, wert)
-            print(f"Schlüssel gespeichert unter {env} (Rechte 600).")
-    if not any(k["name"] == args.name and k["schluessel"] == "gesetzt" for k in konten.liste()):
-        print(f"Schlüssel fehlt noch. In deinem Terminal (nicht im Chat) erneut: omni-agent konto add {args.name} --art {args.art} --ersetzen")
-        print(f"oder in {env_datei()} eine Zeile eintragen:  {env}=dein-schlüssel")
-    if args.art == "token":
-        print("Hinweis: " + konten.HINWEIS_TOKEN)
+        value = getpass.getpass(f"{accounts.KINDS[args.kind][1]} for '{args.name}' (input hidden, Enter skips): ").strip()
+        if value:
+            accounts.set_key(env, value)
+            print(f"Key saved as {env} (mode 600).")
+    if not any(k["name"] == args.name and k["key_values"] == "set" for k in accounts.list_items()):
+        print(f"Key still missing. In your terminal (not in the chat) run again: omni-agent account add {args.name} --kind {args.kind} --replace")
+        print(f"or add a line to {env_file()}:  {env}=your-key")
+    if args.kind == "token":
+        print("Note: " + accounts.TOKEN_NOTE)
     return 0
 
 
-# ---------- fernziele ----------
+# ---------- remote hosts ----------
 
 def cmd_host(args) -> int:
     from . import hosts
-    if args.aktion == "list":
-        eintraege = hosts.lade()
-        if not eintraege:
-            print("Noch kein Ziel. Anlegen: omni-agent host add mini --ssh benutzer@adresse   (Tailscale-Name oder -IP geht auch)")
+    if args.operation == "list":
+        entries = hosts.load()
+        if not entries:
+            print("No host yet. Add one: omni-agent host add mini --ssh user@address   (a Tailscale name or IP works too)")
             return 0
-        for name, e in eintraege.items():
-            print(f"{name:<12} ssh {e['ssh']:<32} Befehl: {e.get('befehl') or hosts.STANDARD_BEFEHL}")
-        print("\nBenutzen: omni-agent run --host NAME ...  (auch status, result, cancel, warte, nutzung, doctor)")
+        for name, e in entries.items():
+            print(f"{name:<12} ssh {e['ssh']:<32} command: {e.get('command') or hosts.DEFAULT_COMMAND}")
+        print("\nUse it: omni-agent run --host NAME ...  (also status, result, cancel, wait, usage, doctor)")
         return 0
     if not args.name:
-        raise KonfigFehler("Bitte einen Zielnamen angeben, z. B.: omni-agent host add mini --ssh benutzer@adresse")
-    if args.aktion == "add":
+        raise ConfigError("Please give a host name, e.g.: omni-agent host add mini --ssh user@address")
+    if args.operation == "add":
         if not args.ssh:
-            raise KonfigFehler("--ssh BENUTZER@ADRESSE fehlt (Name, IP oder Tailscale-Name)")
-        hosts.fuege_hinzu(args.name, args.ssh, args.befehl, args.ersetzen)
-        print(f"Ziel '{args.name}' angelegt ({args.ssh}). Prüfen: omni-agent host test {args.name}")
+            raise ConfigError("--ssh USER@ADDRESS is missing (name, IP or Tailscale name)")
+        hosts.add_entry(args.name, args.ssh, args.command_path, args.overwrite)
+        print(f"Host '{args.name}' added ({args.ssh}). Check it: omni-agent host test {args.name}")
         return 0
-    if args.aktion == "remove":
-        hosts.entferne(args.name)
-        print(f"Ziel '{args.name}' entfernt.")
+    if args.operation == "remove":
+        hosts.remove_entry(args.name)
+        print(f"Host '{args.name}' removed.")
         return 0
-    if args.aktion == "install":
-        pfad = hosts.installiere(args.name)
-        print(f"Omni-Agent liegt auf '{args.name}' unter {pfad}. Schlüssel und Anmeldungen dort einrichten: omni-agent host setup {args.name}")
+    if args.operation == "install":
+        file_path = hosts.install_on_target(args.name)
+        print(f"Omni-Agent is installed on '{args.name}' at {file_path}. Set up keys and logins there: omni-agent host setup {args.name}")
         return 0
-    if args.aktion == "setup":
-        return hosts.leite_weiter(args.name, ["setup"])
-    ok, text = hosts.teste(args.name)
-    print(text.rstrip() if ok else f"Ziel '{args.name}': {text}")
-    return 0 if ok else EXIT_KONFIG
+    if args.operation == "setup":
+        return hosts.forward(args.name, ["setup"])
+    ok, text = hosts.test_target(args.name)
+    print(text.rstrip() if ok else f"Host '{args.name}': {text}")
+    return 0 if ok else EXIT_CONFIG
 
 
-# ---------- nutzung ----------
+# ---------- usage ----------
 
-def cmd_nutzung(args) -> int:
-    """Nutzung und Guthaben, soweit der jeweilige Anbieter sie hergibt. Alle Abfragen laufen parallel."""
+def cmd_usage(args) -> int:
+    """Usage and balance, as far as each provider exposes it. All queries run in parallel."""
     from concurrent.futures import ThreadPoolExecutor
-    from . import konten, nutzung
-    ziel = (args.ziel or "").lower()
-    aufgaben = []  # (Name, Art, Funktion)
-    for k in konten.liste():
-        if ziel in ("", "konten", "claude", k["name"], k["id"]):
-            aufgaben.append((k["id"], "Claude-Konto", lambda k=k: konten.nutzung(k)))
-    if ziel in ("", "codex") and RUNNER["codex"].pfad():
-        aufgaben.append(("codex", "Anmeldung der Codex-CLI", nutzung.codex_nutzung))
-    datei = lese_schluesseldatei()
-    for a in lade_anbieter().values():
-        if a.konto_art or a.id.startswith("claude-") or (ziel and ziel != a.id) or (not ziel and a.id not in nutzung.ABFRAGEN):
+    from . import accounts, usage
+    selector = (args.selector or "").lower()
+    jobs = []  # (name, kind, function)
+    for k in accounts.list_items():
+        if selector in ("", "accounts", "claude", k["name"], k["id"]):
+            jobs.append((k["id"], "Claude account", lambda k=k: accounts.usage(k)))
+    if selector in ("", "codex") and RUNNER["codex"].file_path():
+        jobs.append(("codex", "Codex CLI login", usage.codex_usage))
+    data_file = read_key_file()
+    for a in load_providers().values():
+        if a.account_kind or a.id.startswith("claude-") or (selector and selector != a.id) or (not selector and a.id not in usage.BALANCE_QUERIES):
             continue
-        schluessel = next((w for n in a.key_envs if (w := hole_schluessel(n, datei))), None)
-        if not schluessel and not ziel:
-            continue  # ohne Schlüssel nur auf Zuruf melden, sonst Rauschen
-        aufgaben.append((a.id, a.name, lambda a=a, s=schluessel: nutzung.guthaben(a.id, s)))
-    if not aufgaben:
-        print("Nichts zu zeigen: kein Claude-Konto, kein Codex, kein Anbieter mit Schlüssel. Einrichten: omni-agent setup")
+        key_values = next((w for n in a.key_envs if (w := get_key(n, data_file))), None)
+        if not key_values and not selector:
+            continue  # without a key, report only on request; otherwise it is noise
+        jobs.append((a.id, a.name, lambda a=a, s=key_values: usage.balance(a.id, s)))
+    if not jobs:
+        print("Nothing to show: no Claude account, no Codex, no provider with a key. Set up: omni-agent setup")
         return 0
     with ThreadPoolExecutor(max_workers=6) as pool:
-        ergebnisse = list(pool.map(lambda t: t[2](), aufgaben))
-    for (name, art, _), text in zip(aufgaben, ergebnisse):
-        print(f"{name:<16} {art}")
+        results = list(pool.map(lambda t: t[2](), jobs))
+    for (name, kind, _), text in zip(jobs, results):
+        print(f"{name:<16} {kind}")
         print(f"{'':<16} {text}")
-    print("\nQuellen: Claude-Konten = Rate-Limit-Header (eine Ein-Token-Anfrage je Konto), Codex = `codex app-server`, "
-          "Fremdanbieter = deren Guthaben-Abfrage. Ohne Angabe des Anbieters steht dort nichts.")
+    print("\nSources: Claude accounts = rate-limit headers (one one-token request per account), Codex = `codex app-server`, "
+          "other providers = their balance endpoint. Without such an endpoint nothing is shown.")
     return 0
 
 
-# ---------- anbieter / runner ----------
+# ---------- providers / runners ----------
 
 
-def cmd_anbieter(args) -> int:
-    for a in lade_anbieter().values():
+def cmd_providers(args) -> int:
+    for a in load_providers().values():
         print(f"{a.id}  ({a.name})")
-        print(f"  Protokoll: {', '.join(a.protokolle)}   Adresse: {a.base_url or 'Standard von Claude Code'}")
-        print(f"  Schlüssel: {' oder '.join(a.key_envs) or 'keiner'}   Modelle: {', '.join(f'{k}={v}' for k, v in a.modelle.items()) or 'mit --modell wählen'}")
-        print(f"  Datenort:  {a.region}   Live geprüft: {'ja' if a.geprueft else 'nein'}")
-        print(f"  {a.hinweis}\n")
+        print(f"  Protocol: {', '.join(a.protocols)}   Address: {a.base_url or 'Claude Code default'}")
+        models = ', '.join(f'{k}={v}' for k, v in a.models.items()) or 'choose with --model'
+        print(f"  Key:      {' or '.join(a.key_envs) or 'none'}   Models: {models}")
+        print(f"  Data location: {a.region}   Verified live: {'yes' if a.verified else 'no'}")
+        print(f"  {a.note}\n")
     return 0
 
 
-def cmd_runner(args) -> int:
+def cmd_runners(args) -> int:
     for r in RUNNER.values():
         v = r.version()
-        print(f"{r.name}  {'installiert ' + str(v) if v else 'nicht installiert'}{'  [experimentell]' if r.experimentell else ''}")
-        print(f"  spricht: {', '.join(r.protokolle)}   steuert: {', '.join(sorted(r.kann))}")
-        print(f"  {r.hinweis}\n")
+        print(f"{r.name}  {'installed ' + str(v) if v else 'not installed'}{'  [experimental]' if r.experimental else ''}")
+        print(f"  speaks: {', '.join(r.protocols)}   controls: {', '.join(sorted(r.can))}")
+        print(f"  {r.note}\n")
     return 0
 
 
 # ---------- extras ----------
 
 def cmd_extras(args) -> int:
-    if args.aktion == "install":
-        extras.installieren(args.trotzdem)
-    elif args.aktion == "start":
-        if not args.anbieter:
-            raise KonfigFehler("Anbieter angeben: omni-agent extras litellm start <anbieter> [--modell M]")
-        from .lauf import finde_schluessel
-        a = lade_anbieter().get(args.anbieter)
+    if args.operation == "install":
+        extras.install(args.force)
+    elif args.operation == "start":
+        if not args.provider:
+            raise ConfigError("Give a provider: omni-agent extras litellm start <provider> [--model M]")
+        from .engine import find_key
+        a = load_providers().get(args.provider)
         if not a:
-            raise KonfigFehler(f"Unbekannter Anbieter '{args.anbieter}'")
-        schluessel = next(iter(finde_schluessel(a).values()), "")
-        adresse, _ = extras.starte_proxy(a, a.modell_waehlen(args.modell), schluessel)
-        print(f"Proxy läuft auf {adresse} (nur lokal)")
-    elif args.aktion == "stop":
-        print("Proxy gestoppt." if extras.stoppe_proxy() else "Proxy lief nicht.")
+            raise ConfigError(f"Unknown provider '{args.provider}'")
+        key_values = next(iter(find_key(a).values()), "")
+        address, _ = extras.start_proxy(a, a.pick_model(args.model), key_values)
+        print(f"Proxy running on {address} (local only)")
+    elif args.operation == "stop":
+        print("Proxy stopped." if extras.stop_proxy() else "Proxy was not running.")
     else:
         print(extras.status_text())
     return 0
 
 
-# ---------- Aufbau ----------
+# ---------- parser ----------
 
-def baue_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="omni-agent",
-        description="Hintergrund-Agents mit austauschbarem Anbieter (Modell-Quelle) und Runner (Agent-CLI).",
+        description="Background agents with a swappable provider (model source) and runner (agent CLI).",
     )
     p.add_argument("--version", action="version", version=f"omni-agent {VERSION}")
-    sub = p.add_subparsers(dest="befehl", required=True)
+    sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("setup", help="Ordner, Schlüsseldatei und Befehl einrichten, dann prüfen")
-    s.add_argument("--anbieter", help="Anleitung für diesen Anbieter ausgeben")
-    s.add_argument("--oeffnen", action="store_true", help="Schlüsseldatei im Editor öffnen")
-    s.add_argument("--review-gate", choices=["an", "aus"], help="Prüfung vor dem Beenden einer Claude-Sitzung ein- oder ausschalten (Standard: aus)")
+    s = sub.add_parser("setup", help="Set up folder, key file and command, then check")
+    s.add_argument("--provider", dest="provider", help="print instructions for this provider")
+    s.add_argument("--open", dest="open_flag", action="store_true", help="open the key file in your editor")
+    s.add_argument("--review-gate", choices=["on", "off"], help="turn the check before a Claude session ends on or off (default: off)")
     s.set_defaults(fn=cmd_setup)
 
-    s = sub.add_parser("doctor", help="Was ist da, was fehlt (Runner, Schlüssel, Passung)")
-    s.add_argument("--netz", action="store_true", help="auch die Erreichbarkeit der Endpunkte prüfen")
+    s = sub.add_parser("doctor", help="What is there, what is missing (runners, keys, fit)")
+    s.add_argument("--network", dest="network", action="store_true", help="also check that the endpoints are reachable")
     s.set_defaults(fn=cmd_doctor)
 
-    s = sub.add_parser("run", help="Auftrag ausführen (blockierend; im Hintergrund starten, wenn Claude es tut)")
-    s.add_argument("auftrag", nargs="?", help="Auftragsdatei (Markdown)")
-    s.add_argument("--text", help="Auftrag direkt als Text statt als Datei")
-    s.add_argument("--anbieter", help="siehe: omni-agent anbieter; ohne Angabe gilt der Standard (omni-agent konto standard)")
-    s.add_argument("--konto", help="Kurzform für --anbieter claude-<name>, z. B. --konto felipe")
-    s.add_argument("--modell", help="Modellname oder Kurzname (standard, stark, klein)")
-    s.add_argument("--runner", help="claude, opencode, codex oder dsh; ohne Angabe der erste passende installierte")
-    s.add_argument("--werkzeuge", help="z. B. 'lesen,schreiben', '+shell', '-web_suche' (Standard: lesen,schreiben,web_suche,web_laden)")
-    s.add_argument("--max-runden", type=int, default=12, help="Obergrenze für Werkzeugaufrufe laut Auftragsrahmen (Standard 12)")
-    s.add_argument("--zeit", type=int, default=900, help="Zeitlimit in Sekunden (Standard 900)")
-    s.add_argument("--ordner", help="eigener, leerer Arbeitsordner statt ~/.omni-agent/laeufe/...")
-    s.add_argument("--material", help="Ordner, dessen Inhalt vor dem Start in den Arbeitsordner kopiert wird")
-    s.add_argument("--ueber-litellm", action="store_true", help="OpenAI-Anbieter für Claude Code über das Extra LiteLLM übersetzen")
-    s.add_argument("--fortsetzen", nargs="?", const="", default=None, metavar="LAUF", help="Nachfrage an einen früheren Lauf (ohne Namen: der letzte); --text ist die Nachfrage")
-    s.add_argument("--aufwand", choices=["minimal", "low", "medium", "high", "xhigh"], help="Denkaufwand (nur Codex)")
-    s.add_argument("--projekt", nargs="?", const="", default=None, metavar="ORDNER", help="im Projektordner arbeiten (ohne Wert: aktuelles Verzeichnis), nur lesen (mit jedem Anbieter, die Entscheidung liegt bei dir)")
-    s.add_argument("--schreibend", action="store_true", help="mit --projekt: Dateien im Projekt dürfen geändert werden")
-    s.add_argument("--hintergrund", action="store_true", help="als losgelöster Prozess starten und sofort den Laufnamen melden")
-    s.add_argument("--warten", type=int, metavar="SEK", help="losgelöst starten und höchstens so lange auf das Ende warten (meldet dann Stand oder Bericht)")
+    s = sub.add_parser("run", help="Run a task (blocking; Claude starts it in the background)")
+    s.add_argument("task", nargs="?", metavar="task_file", help="task file (Markdown)")
+    s.add_argument("--text", help="the task as text instead of a file")
+    s.add_argument("--provider", dest="provider", help="see: omni-agent providers; without it the default applies (omni-agent account default)")
+    s.add_argument("--account", dest="account", help="shorthand for --provider claude-<name>, e.g. --account felipe")
+    s.add_argument("--model", dest="model", help="model name or tier (default, strong, small)")
+    s.add_argument("--runner", help="claude, opencode, codex or dsh; without it the first matching installed one")
+    s.add_argument("--tools", dest="tool_list", help="e.g. 'read,write', '+shell', '-web_search' (default: read,write,web_search,web_fetch)")
+    s.add_argument("--max-turns", dest="max_turns", type=int, default=12, help="upper bound for tool calls per the task frame (default 12)")
+    s.add_argument("--timeout", dest="time_limit", type=int, default=900, help="time limit in seconds (default 900)")
+    s.add_argument("--dir", dest="folder", help="own, empty working folder instead of ~/.omni-agent/runs/...")
+    s.add_argument("--files", dest="files", help="folder whose content is copied into the working folder before the start")
+    s.add_argument("--via-litellm", dest="via_litellm", action="store_true", help="translate OpenAI providers for Claude Code through the LiteLLM extra")
+    s.add_argument("--resume", dest="resume", nargs="?", const="", default=None, metavar="RUN", help="follow-up to an earlier run (without a name: the latest); --text is the follow-up")
+    s.add_argument("--effort", dest="effort", choices=["minimal", "low", "medium", "high", "xhigh"], help="reasoning effort (Codex only)")
+    s.add_argument("--project", dest="project", nargs="?", const="", default=None, metavar="DIR", help="work in the project folder (without a value: current directory), read-only (works with any provider, the decision is yours)")
+    s.add_argument("--write", dest="writable", action="store_true", help="with --project: files in the project may be changed")
+    s.add_argument("--background", dest="background", action="store_true", help="start as a detached process and report the run name immediately")
+    s.add_argument("--wait", dest="wait_seconds", type=int, metavar="SEC", help="start detached and wait at most this long for the end (then reports state or report)")
     s.set_defaults(fn=cmd_run)
 
-    s = sub.add_parser("review", help="Git-Änderungen von einem anderen Modell prüfen lassen (der Diff verlässt den Rechner)")
-    s.add_argument("fokus", nargs="*", help="Schwerpunkt als freier Text, z. B. Rechte und Datenverlust")
-    s.add_argument("--base", help="Branch gegen diesen Stand prüfen, z. B. main (ohne Angabe: alle Änderungen gegen HEAD)")
-    s.add_argument("--adversarial", action="store_true", help="auch die gewählte Lösung infrage stellen")
-    s.add_argument("--anbieter", help="siehe: omni-agent anbieter; ohne Angabe der Standard")
-    s.add_argument("--konto", help="Kurzform für --anbieter claude-<name>")
-    s.add_argument("--modell")
+    s = sub.add_parser("review", help="Have another model review your git changes (the diff leaves your machine)")
+    s.add_argument("focus", nargs="*", metavar="focus", help="focus as free text, e.g. permissions and data loss")
+    s.add_argument("--base", help="review against this branch, e.g. main (without it: all changes against HEAD)")
+    s.add_argument("--adversarial", action="store_true", help="also challenge the chosen approach")
+    s.add_argument("--provider", dest="provider", help="see: omni-agent providers; without it the default")
+    s.add_argument("--account", dest="account", help="shorthand for --provider claude-<name>")
+    s.add_argument("--model", dest="model")
     s.add_argument("--runner")
-    s.add_argument("--aufwand", choices=["minimal", "low", "medium", "high", "xhigh"], help="Denkaufwand (nur Codex)")
-    s.add_argument("--max-runden", type=int, default=10)
-    s.add_argument("--zeit", type=int, default=900)
-    s.add_argument("--hintergrund", action="store_true", help="als losgelöster Prozess starten und sofort den Laufnamen melden")
-    s.add_argument("--warten", type=int, metavar="SEK", help="losgelöst starten und höchstens so lange auf das Ende warten")
-    s.add_argument("--vorschau", action="store_true", help="nur zeigen, was gesendet würde; nichts senden")
-    s.add_argument("--trotzdem", action="store_true", help="auch senden, wenn der Diff mögliche Geheimnisse enthält")
+    s.add_argument("--effort", dest="effort", choices=["minimal", "low", "medium", "high", "xhigh"], help="reasoning effort (Codex only)")
+    s.add_argument("--max-turns", dest="max_turns", type=int, default=10)
+    s.add_argument("--timeout", dest="time_limit", type=int, default=900)
+    s.add_argument("--background", dest="background", action="store_true", help="start as a detached process and report the run name immediately")
+    s.add_argument("--wait", dest="wait_seconds", type=int, metavar="SEC", help="start detached and wait at most this long for the end")
+    s.add_argument("--preview", dest="preview", action="store_true", help="only show what would be sent; send nothing")
+    s.add_argument("--force", dest="force", action="store_true", help="send even if the diff may contain secrets")
     s.set_defaults(fn=cmd_review)
 
-    s = sub.add_parser("cancel", help="Laufenden Lauf abbrechen (ohne Angabe: den laufenden)")
-    s.add_argument("lauf", nargs="?")
+    s = sub.add_parser("cancel", help="Cancel a running run (without a name: the active one)")
+    s.add_argument("run_name", nargs="?", metavar="run")
     s.set_defaults(fn=cmd_cancel)
 
-    s = sub.add_parser("result", help="Bericht eines Laufs anzeigen (ohne Angabe: der neueste mit Bericht)")
-    s.add_argument("lauf", nargs="?")
-    s.add_argument("--pfad", action="store_true", help="nur den Pfad zur bericht.md ausgeben")
+    s = sub.add_parser("result", help="Show the report of a run (without a name: the newest with a report)")
+    s.add_argument("run_name", nargs="?", metavar="run")
+    s.add_argument("--path", dest="file_path", action="store_true", help="print only the path to report.md")
     s.set_defaults(fn=cmd_result)
 
-    s = sub.add_parser("status", help="Läufe anzeigen (dieser Claude-Sitzung, sonst alle)")
-    s.add_argument("lauf", nargs="?", help="Teil des Laufnamens; ohne Angabe die letzten Läufe")
-    s.add_argument("--anzahl", type=int, default=10)
-    s.add_argument("--alle", action="store_true", help="auch Läufe anderer Sitzungen")
-    s.add_argument("--md", action="store_true", help="als Markdown-Tabelle")
+    s = sub.add_parser("status", help="Show runs (of this Claude session, otherwise all)")
+    s.add_argument("run_name", nargs="?", metavar="run", help="part of the run name; without it the latest runs")
+    s.add_argument("--limit", dest="limit", type=int, default=10)
+    s.add_argument("--all", dest="show_all", action="store_true", help="also runs of other sessions")
+    s.add_argument("--md", action="store_true", help="as a Markdown table")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
 
-    s = sub.add_parser("warte", help="Auf einen Lauf warten (höchstens --max Sekunden) und Stand oder Bericht melden")
-    s.add_argument("lauf", nargs="?", help="Teil des Laufnamens; ohne Angabe der neueste")
-    s.add_argument("--max", type=int, default=540, help="Sekunden (Standard 540, unter dem 10-Minuten-Limit des Bash-Werkzeugs)")
-    s.set_defaults(fn=cmd_warte)
+    s = sub.add_parser("wait", help="Wait for a run (at most --max seconds) and report state or report")
+    s.add_argument("run_name", nargs="?", metavar="run", help="part of the run name; without it the newest")
+    s.add_argument("--max", type=int, default=540, help="seconds (default 540, below the 10-minute limit of the Bash tool)")
+    s.set_defaults(fn=cmd_wait)
 
-    sub.add_parser("fortsetzbar", help="JSON: gibt es einen Lauf dieser Sitzung, der fortgesetzt werden kann?").set_defaults(fn=cmd_fortsetzbar)
+    sub.add_parser("resumable", help="JSON: is there a run of this session that can be resumed?").set_defaults(fn=cmd_resumable)
 
-    s = sub.add_parser("hook", help="Einstieg für die Hooks des Plugins (liest JSON von stdin)")
-    s.add_argument("name", choices=["start", "ende", "stopp"])
+    s = sub.add_parser("hook", help="Entry point for the plugin's hooks (reads JSON from stdin)")
+    s.add_argument("name", choices=["start", "end", "stop"])
     s.set_defaults(fn=cmd_hook)
 
-    sub.add_parser("anbieter", help="Anbieter mit Datenort auflisten").set_defaults(fn=cmd_anbieter)
-    s = sub.add_parser("host", help="Fernziele (Mac mini, Server) für --host: add, list, remove, test, install, setup")
-    s.add_argument("aktion", nargs="?", default="list", choices=["add", "list", "remove", "test", "install", "setup"])
-    s.add_argument("name", nargs="?", help="Zielname, z. B. mini")
-    s.add_argument("--ssh", metavar="BENUTZER@ADRESSE", help="Ziel für ssh: Name, IP oder Tailscale-Name")
-    s.add_argument("--befehl", help="Pfad zu omni-agent auf dem Ziel (Standard: omni-agent im PATH; host install setzt ihn selbst)")
-    s.add_argument("--ersetzen", action="store_true", help="vorhandenes Ziel gleichen Namens überschreiben")
+    sub.add_parser("providers", help="List providers with their data location").set_defaults(fn=cmd_providers)
+    s = sub.add_parser("host", help="Remote hosts (Mac mini, server) for --host: add, list, remove, test, install, setup")
+    s.add_argument("operation", nargs="?", default="list", metavar="action", choices=["add", "list", "remove", "test", "install", "setup"])
+    s.add_argument("name", nargs="?", help="host name, e.g. mini")
+    s.add_argument("--ssh", metavar="USER@ADDRESS", help="ssh target: name, IP or Tailscale name")
+    s.add_argument("--command", dest="command_path", help="path to omni-agent on the host (default: omni-agent on PATH; host install sets it itself)")
+    s.add_argument("--replace", dest="overwrite", action="store_true", help="overwrite an existing host of the same name")
     s.set_defaults(fn=cmd_host)
-    s = sub.add_parser("nutzung", help="Nutzung und Guthaben: Claude-Konten, Codex, DeepSeek, Kimi, OpenRouter, EUrouter")
-    s.add_argument("ziel", nargs="?", help="nur dieses Konto oder diesen Anbieter zeigen (konten, codex, deepseek, ...)")
-    s.set_defaults(fn=cmd_nutzung)
-    s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove, standard")
-    s.add_argument("aktion", choices=["add", "list", "remove", "standard"])
-    s.add_argument("name", nargs="?", help="Kontoname, z. B. felipe oder fps")
-    s.add_argument("--art", choices=["api", "token"], default="api", help="api = ANTHROPIC_API_KEY (empfohlen), token = Abo-Token")
-    s.add_argument("--titel", help="Anzeigename, z. B. 'Felipes Konto'")
-    s.add_argument("--uebernehme", metavar="ENV_NAME", help="vorhandene Zeile der Schlüsseldatei unter dem Kontonamen weiterverwenden (z. B. CLAUDE_CODE_OAUTH_TOKEN)")
-    s.add_argument("--loeschen", action="store_true", help="bei standard den Standard entfernen")
-    s.add_argument("--ersetzen", action="store_true", help="vorhandenes Konto gleichen Namens überschreiben")
-    s.add_argument("--mit-schluessel", action="store_true", help="bei remove auch die Schlüsselzeile löschen")
-    s.add_argument("--ohne-nutzung", action="store_true", help="bei list keine Limit-Abfrage machen (kein Netz)")
-    s.set_defaults(fn=cmd_konto)
-    sub.add_parser("runner", help="Runner auflisten").set_defaults(fn=cmd_runner)
+    s = sub.add_parser("usage", help="Usage and balance: Claude accounts, Codex, DeepSeek, Kimi, OpenRouter, EUrouter")
+    s.add_argument("selector", nargs="?", metavar="target", help="show only this account or provider (accounts, codex, deepseek, ...)")
+    s.set_defaults(fn=cmd_usage)
+    s = sub.add_parser("account", help="Named Claude accounts (any number): add, list, remove, default")
+    s.add_argument("operation", metavar="action", choices=["add", "list", "remove", "default"])
+    s.add_argument("name", nargs="?", help="account name, e.g. felipe or fps")
+    s.add_argument("--kind", dest="kind", choices=["api", "token"], default="api", help="api = ANTHROPIC_API_KEY (recommended), token = subscription token")
+    s.add_argument("--title", dest="title", help="display name, e.g. 'Felipe's account'")
+    s.add_argument("--adopt", dest="adopt", metavar="ENV_NAME", help="reuse an existing key-file line under the account name (e.g. CLAUDE_CODE_OAUTH_TOKEN)")
+    s.add_argument("--delete", dest="delete", action="store_true", help="with default: remove the default")
+    s.add_argument("--replace", dest="overwrite", action="store_true", help="overwrite an existing account of the same name")
+    s.add_argument("--with-key", dest="with_key", action="store_true", help="with remove: also delete the key line")
+    s.add_argument("--no-usage", dest="no_usage", action="store_true", help="with list: skip the limit query (no network)")
+    s.set_defaults(fn=cmd_account)
+    sub.add_parser("runners", help="List runners").set_defaults(fn=cmd_runners)
 
-    s = sub.add_parser("extras", help="Optionale Extras")
+    s = sub.add_parser("extras", help="Optional extras")
     s.add_argument("name", choices=["litellm"])
-    s.add_argument("aktion", choices=["install", "start", "stop", "status"])
-    s.add_argument("anbieter", nargs="?")
-    s.add_argument("--modell")
-    s.add_argument("--trotzdem", action="store_true", help="Install trotz anderer Python-Version")
+    s.add_argument("operation", metavar="action", choices=["install", "start", "stop", "status"])
+    s.add_argument("provider", nargs="?", metavar="provider")
+    s.add_argument("--model", dest="model")
+    s.add_argument("--force", dest="force", action="store_true", help="install despite a different Python version")
     s.set_defaults(fn=cmd_extras)
-    for name in ("run", "review", "status", "result", "cancel", "warte", "doctor", "nutzung"):
-        sub.choices[name].add_argument("--host", metavar="ZIEL", help="auf einem Fernziel ausführen (omni-agent host add), per ssh; Schlüssel und Projekte liegen dort")
+    for name in ("run", "review", "status", "result", "cancel", "wait", "doctor", "usage"):
+        sub.choices[name].add_argument("--host", metavar="TARGET", help="run on a remote host (omni-agent host add), via ssh; keys and projects live there")
+    # English metavars in --help (the internal dest names stay German for now)
+    metavars = {"provider": "PROVIDER", "limit": "N", "command_path": "PATH", "account": "ACCOUNT", "files": "DIR",
+                "max_turns": "N", "model": "MODEL", "folder": "DIR", "title": "TITLE", "tool_list": "TOOLS", "time_limit": "SECONDS"}
+    for sp in sub.choices.values():
+        for a in sp._actions:
+            if a.option_strings and a.nargs != 0 and a.metavar is None and a.choices is None and a.dest in metavars:
+                a.metavar = metavars[a.dest]
     return p
 
 
 def main(argv=None) -> int:
-    args = baue_parser().parse_args(argv)
-    args._argv = list(argv) if argv is not None else sys.argv[1:]
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    args = build_parser().parse_args(argv)
+    args._argv = argv
     if getattr(args, "host", None):
         from . import hosts
         try:
-            return hosts.leite_weiter(args.host, args._argv, args)
-        except KonfigFehler as fehler:
-            print(f"Fehler: {fehler}", file=sys.stderr)
-            return fehler.exit_code
-    if args.befehl == "run" and not args.auftrag and args.text is None:
-        print("Auftragsdatei oder --text angeben", file=sys.stderr)
-        return EXIT_KONFIG
+            return hosts.forward(args.host, args._argv, args)
+        except ConfigError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return exc.exit_code
+    if args.command == "run" and not args.task and args.text is None:
+        print("Give a task file or --text", file=sys.stderr)
+        return EXIT_CONFIG
     try:
         return args.fn(args)
-    except KonfigFehler as fehler:
-        print(f"Fehler: {fehler}", file=sys.stderr)
-        return fehler.exit_code
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return exc.exit_code
     except KeyboardInterrupt:
         return 130

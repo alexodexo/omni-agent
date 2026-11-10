@@ -1,0 +1,15 @@
+name: Suggest an idea or provider
+description: New feature, new provider, new agent CLI
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should become possible, and what do you need it for?
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: For a provider: vendor documentation
+      description: Address of the Anthropic-, OpenAI- or Responses-compatible interface, data location, key name.

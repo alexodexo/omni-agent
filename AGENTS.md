@@ -1,33 +1,34 @@
-# Omni-Agent: Hinweise für Agenten, die am Repo arbeiten
+# Omni-Agent: notes for agents working on this repo
 
-Omni-Agent ist ein Python-Kern (`bin/omni-agent`, `lib/omni-agent/`, nur Standardbibliothek) mit einer dünnen Claude-Code-Plugin-Hülle (`.claude-plugin/`, `agents/`, `commands/`, `skills/`, `hooks/`). Sprache im Repo, in Commits und Tests: Deutsch.
+Omni-Agent is a Python core (`bin/omni-agent`, `lib/omni_agent/`, standard library only) with a thin Claude Code plugin shell (`.claude-plugin/`, `agents/`, `commands/`, `skills/`, `hooks/`). Language in the repo, in commits and tests: English.
 
-## Aufbau
+## Layout
 
-| Ort | Inhalt |
+| Location | Contents |
 |---|---|
-| `bin/omni-agent` | Einstieg. Findet `lib/` über den eigenen Dateipfad (auch per Symlink); `${CLAUDE_PLUGIN_ROOT}` ist in Bash-Befehlen nicht gesetzt |
-| `lib/omni-agent/lauf.py` | Lauf: wählen, starten, überwachen, `status.json` |
-| `lib/omni-agent/runner/` | Ein Adapter je Agent-CLI (`claude`, `opencode`, `codex`, `dsh`), Passungsregel in `__init__.py` |
-| `lib/omni-agent/anbieter.py` + `providers.json` | Anbieter als Daten |
-| `lib/omni-agent/extras.py` + `extras/litellm/` | Optionaler Übersetzer, gepinnt mit Hash-Sperre |
-| `lib/omni_agent/haken.py` | Einstiege der Hooks (`hook start|ende|stopp`) und Review-Gate |
-| `agents/lauf.md` | Subagent `omni-agent:lauf`, dünner Weiterleiter; die Beschreibung löst die Delegation aus |
-| `commands/*.md` | Slash-Befehle (Text für Claude, kein Code); `status`/`result`/`cancel`/`doctor`/`konten` per `!`-Einschub |
-| `skills/omni-agent-*/SKILL.md` | Interne Skills (`user-invocable: false`): Laufzeitvertrag, Auftrag schreiben, Ergebnisse weitergeben |
+| `bin/omni-agent` | Entry point. Finds `lib/` through its own file path (also via symlink); `${CLAUDE_PLUGIN_ROOT}` is not set in Bash commands |
+| `lib/omni_agent/engine.py` | Run: choose, start, monitor, `status.json` |
+| `lib/omni_agent/runner/` | One adapter per agent CLI (`claude`, `opencode`, `codex`, `dsh`), matching rule in `__init__.py` |
+| `lib/omni_agent/providers.py` + `providers.json` | Providers as data |
+| `lib/omni_agent/extras.py` + `extras/litellm/` | Optional translator, pinned with a hash lock |
+| `lib/omni_agent/hooks.py` | Hook entry points (`hook start|end|stop`) and review gate |
+| `agents/worker.md` | Subagent `omni-agent:worker`, a thin forwarder; its description triggers delegation |
+| `commands/*.md` | Slash commands (text for Claude, no code); `status`/`result`/`cancel`/`doctor`/`accounts` via `!` inline execution |
+| `skills/omni-agent-*/SKILL.md` | Internal skills (`user-invocable: false`): runtime contract, writing a task, passing on results |
 | `hooks/hooks.json` | SessionStart, SessionEnd, Stop |
 | `tests/` | `python3 -m unittest discover -s tests -v` |
 
-## Regeln
+## Rules
 
-- **Neuer Anbieter:** Eintrag in `providers.json` (kein Code), `geprueft` nur auf `true`, wenn ein echter Lauf gelungen ist. Datenort in `region` und README-Tabelle ehrlich: unbekannt heißt „nicht belegt".
-- **Neuer Runner:** Klasse in `runner/`, in `RUNNER` eintragen, Befehlsbau mit einem Test absichern. Experimentelle Runner nie in `AUTO_REIHENFOLGE`.
-- **Schlüssel** nie im Repo, im Log, im Chat. Ein Runner bekommt nur die Schlüssel aus `LaufKontext.schluessel` (genau einer). Die Umgebung wird neu aufgebaut (`grundumgebung()`), nie vererbt.
-- **Fertig heißt `bericht.md` vorhanden.** Der Exit-Code des Runners ist nur ein Zusatzsignal.
-- **Was ein Runner nicht kann, wird verweigert**, nicht still weggelassen (`loese_werkzeuge`). Nur Standard-Werkzeuge dürfen still schrumpfen.
-- **Dokumentierte Befehle sind getestet:** Jede `omni-agent …`-Zeile in `commands/`, `agents/` und `skills/` muss der echte Parser annehmen (`PluginAufbau.test_dokumentierte_befehle_sind_echte_befehle`). Neues Flag? Erst im Parser, dann in der Doku.
-- **Der Subagent leitet nur weiter.** Neue Logik gehört in den Kern (`lib/`), nicht in `agents/lauf.md`. Hooks tun nie etwas, wenn `OMNI_AGENT_LAUF=1` gesetzt ist (Läufe starten keine Läufe).
-- **Version:** `lib/omni-agent/__init__.py` (`VERSION`) und `.claude-plugin/plugin.json` (`version`) bleiben gleich (Test). Wer `version` nicht erhöht, liefert Nutzerinnen kein Update.
-- **LiteLLM-Pin** nur nach Lesen der Vorfallsseite des Herstellers ändern; Sperrdatei mit Hashes neu erzeugen (`uv pip compile --generate-hashes`).
-- Vor jedem Commit: Tests und `claude plugin validate --strict .`. Vor jeder Veröffentlichung: Geheimnis-Scan des Baums **und** der Git-Historie.
-- Keine Zeitschätzungen in Plänen; nur Reihenfolge und Tore.
+- **New provider:** an entry in `providers.json` (no code); set `verified` to `true` only if a real run succeeded. Be honest about the data location in `region` and the README table: unknown means "not documented".
+- **New runner:** a class in `runner/`, register it in `RUNNER`, cover the command building with a test. Never put experimental runners in `AUTO_ORDER`.
+- **Keys** never in the repo, in the log, in the chat. A runner gets only the keys from `RunContext.key_values` (exactly one). The environment is rebuilt (`base_env()`), never inherited.
+- **Done means `report.md` exists.** The exit code of the runner is only an additional signal.
+- **What a runner cannot do is refused**, not silently dropped (`resolve_tools`). Only default tools may shrink silently.
+- **Documented commands are tested:** every `omni-agent …` line in `commands/`, `agents/` and `skills/` must be accepted by the real parser (`PluginAufbau.test_dokumentierte_befehle_sind_echte_befehle`). New flag? First in the parser, then in the docs.
+- **The subagent only forwards.** New logic belongs in the core (`lib/`), not in `agents/worker.md`. Hooks never do anything when `OMNI_AGENT_RUN=1` is set (runs do not start runs).
+- **Naming:** the user-facing interface (commands, flags, files, env vars, config keys) is English. The German spellings are gone: no aliases, no fallbacks.
+- **Version:** `lib/omni_agent/__init__.py` (`VERSION`) and `.claude-plugin/plugin.json` (`version`) stay equal (test). If you do not raise `version`, users get no update.
+- **LiteLLM pin:** change it only after reading the vendor's incident page; regenerate the lock file with hashes (`uv pip compile --generate-hashes`).
+- Before every commit: tests and `claude plugin validate --strict .`. Before every release: a secrets scan of the tree **and** of the git history.
+- No time estimates in plans; only order and gates.

@@ -1,125 +1,125 @@
-"""Runner-Register und Passungsregel (Protokoll des Anbieters x Protokolle des Runners)."""
+"""Runner registry and matching rule (provider protocol x runner protocols)."""
 from __future__ import annotations
 
-from ..konfig import KonfigFehler
-from .basis import STANDARD_WERKZEUGE, WERKZEUGE, Runner
+from ..config import ConfigError
+from .base import DEFAULT_TOOLS, TOOLS, Runner
 from .claude import ClaudeRunner
 from .codex import CodexRunner
 from .dsh import DshRunner
 from .opencode import OpencodeRunner
 
 RUNNER = {r.name: r for r in (ClaudeRunner(), OpencodeRunner(), CodexRunner(), DshRunner())}
-AUTO_REIHENFOLGE = ("claude", "opencode", "codex")  # dsh nie automatisch
+AUTO_ORDER = ("claude", "opencode", "codex")  # dsh is never picked automatically
 
 
-def wirksames_protokoll(anbieter, runner: Runner, ueber_litellm: bool) -> str | None:
-    """Welches Protokoll Runner und Anbieter gemeinsam sprechen, oder None."""
-    if ueber_litellm:
-        # Der lokale Übersetzer macht aus einem OpenAI-Anbieter einen Anthropic-Endpunkt.
-        if "openai-chat" in anbieter.protokolle and runner.spricht("anthropic"):
+def effective_protocol(provider, runner: Runner, via_litellm: bool) -> str | None:
+    """Which protocol runner and provider both speak, or None."""
+    if via_litellm:
+        # The local translator turns an OpenAI provider into an Anthropic endpoint.
+        if "openai-chat" in provider.protocols and runner.speaks("anthropic"):
             return "anthropic"
         return None
-    for protokoll in anbieter.protokolle:
-        if runner.spricht(protokoll):
-            return protokoll
+    for protocol in provider.protocols:
+        if runner.speaks(protocol):
+            return protocol
     return None
 
 
-def passt(anbieter, runner: Runner, ueber_litellm: bool = False) -> bool:
-    if runner.name == "dsh" and anbieter.id != "deepseek":
+def fits(provider, runner: Runner, via_litellm: bool = False) -> bool:
+    if runner.name == "dsh" and provider.id != "deepseek":
         return False
-    zwang = anbieter.runner_zwang
-    if zwang and runner.name != zwang:
-        return False  # Konten ohne Adresse laufen nur über ihre eigene Agent-CLI
-    if zwang and zwang == runner.name:
+    forced = provider.runner_only
+    if forced and runner.name != forced:
+        return False  # accounts without an address only run through their own agent CLI
+    if forced and forced == runner.name:
         return True
-    return wirksames_protokoll(anbieter, runner, ueber_litellm) is not None
+    return effective_protocol(provider, runner, via_litellm) is not None
 
 
-def waehle_runner(anbieter, wunsch: str | None, ueber_litellm: bool = False) -> Runner:
-    """Ohne Wunsch: erster INSTALLIERTER Runner der Reihe claude, opencode, codex, der passt."""
-    if wunsch:
-        if wunsch not in RUNNER:
-            raise KonfigFehler(f"Unbekannter Runner '{wunsch}'. Bekannt: {', '.join(RUNNER)}")
-        runner = RUNNER[wunsch]
-        if not runner.pfad():
-            raise KonfigFehler(f"Runner '{wunsch}' ist nicht installiert (Befehl '{runner.binary}' nicht im PATH)")
-        if not passt(anbieter, runner, ueber_litellm):
-            raise KonfigFehler(erklaere_unpassend(anbieter, runner, ueber_litellm))
+def choose_runner(provider, requested: str | None, via_litellm: bool = False) -> Runner:
+    """Without a request: the first INSTALLED runner of claude, opencode, codex that fits."""
+    if requested:
+        if requested not in RUNNER:
+            raise ConfigError(f"Unknown runner '{requested}'. Known: {', '.join(RUNNER)}")
+        runner = RUNNER[requested]
+        if not runner.file_path():
+            raise ConfigError(f"Runner '{requested}' is not installed (command '{runner.binary}' not on PATH)")
+        if not fits(provider, runner, via_litellm):
+            raise ConfigError(explain_mismatch(provider, runner, via_litellm))
         return runner
 
-    installiert = [RUNNER[n] for n in AUTO_REIHENFOLGE if RUNNER[n].pfad()]
-    if not installiert:
-        raise KonfigFehler("Kein Runner installiert. Mindestens eine Agent-CLI nötig: claude, opencode oder codex")
-    for runner in installiert:
-        if passt(anbieter, runner, ueber_litellm):
+    installed = [RUNNER[n] for n in AUTO_ORDER if RUNNER[n].file_path()]
+    if not installed:
+        raise ConfigError("No runner installed. At least one agent CLI is needed: claude, opencode or codex")
+    for runner in installed:
+        if fits(provider, runner, via_litellm):
             return runner
-    raise KonfigFehler(
-        f"Kein installierter Runner passt zu '{anbieter.id}' (Protokoll: {', '.join(anbieter.protokolle)}). "
-        + erklaere_unpassend(anbieter, installiert[0], ueber_litellm)
+    raise ConfigError(
+        f"No installed runner fits '{provider.id}' (protocol: {', '.join(provider.protocols)}). "
+        + explain_mismatch(provider, installed[0], via_litellm)
     )
 
 
-def erklaere_unpassend(anbieter, runner: Runner, ueber_litellm: bool) -> str:
-    if runner.name == "dsh" and anbieter.id != "deepseek":
-        return "Runner 'dsh' ist nur für den Anbieter 'deepseek' gedacht."
-    zwang = anbieter.runner_zwang
-    if zwang and runner.name != zwang:
-        return f"Anbieter '{anbieter.id}' (Konto der Agent-CLI) läuft nur über den Runner '{zwang}'."
-    sprichst = ", ".join(anbieter.protokolle)
-    text = f"Anbieter '{anbieter.id}' spricht {sprichst}, Runner '{runner.name}' spricht {', '.join(runner.protokolle)}."
-    if "openai-chat" in anbieter.protokolle and runner.spricht("anthropic") and not ueber_litellm:
-        text += " Optionen: --runner opencode, oder Claude Code über das Extra LiteLLM (--ueber-litellm)."
-    elif "openai-responses" not in anbieter.protokolle and runner.name == "codex":
-        text += " Codex spricht nur die Responses-API."
+def explain_mismatch(provider, runner: Runner, via_litellm: bool) -> str:
+    if runner.name == "dsh" and provider.id != "deepseek":
+        return "Runner 'dsh' is only meant for the provider 'deepseek'."
+    forced = provider.runner_only
+    if forced and runner.name != forced:
+        return f"Provider '{provider.id}' (account of the agent CLI) only runs through the runner '{forced}'."
+    speaks_text = ", ".join(provider.protocols)
+    text = f"Provider '{provider.id}' speaks {speaks_text}, runner '{runner.name}' speaks {', '.join(runner.protocols)}."
+    if "openai-chat" in provider.protocols and runner.speaks("anthropic") and not via_litellm:
+        text += " Options: --runner opencode, or Claude Code through the LiteLLM extra (--via-litellm)."
+    elif "openai-responses" not in provider.protocols and runner.name == "codex":
+        text += " Codex only speaks the Responses API."
     else:
-        text += " Wähle einen anderen Runner (omni-agent runner)."
+        text += " Pick another runner (omni-agent runners)."
     return text
 
 
-def loese_werkzeuge(wunsch: str | None, runner: Runner) -> tuple:
-    """Wandelt --werkzeuge in eine Liste neutraler Werkzeuge. Verweigert, was der Runner nicht kann.
+def resolve_tools(requested: str | None, runner: Runner) -> tuple:
+    """Turn --tools into a list of neutral tools. Refuses what the runner cannot do.
 
-    Ohne Angabe: Standard (ohne shell), auf das reduziert, was der Runner kann.
-    Syntax: 'lesen,schreiben' ersetzt den Standard, '+shell' fügt hinzu, '-web_suche' nimmt weg.
+    Without a value: the default (no shell), reduced to what the runner can do.
+    Syntax: 'read,write' replaces the default, '+shell' adds, '-web_search' removes.
     """
-    aktuell = set(STANDARD_WERKZEUGE)
-    genannt = set()  # was die Nutzerin ausdrücklich verlangt hat
-    if wunsch:
-        teile = [t for t in wunsch.replace(",", " ").split() if t]
-        ersetzt = False
-        for teil in teile:
-            op, name = (teil[0], teil[1:]) if teil[0] in "+-" else ("=", teil)
-            if name not in WERKZEUGE:
-                raise KonfigFehler(f"Unbekanntes Werkzeug '{name}'. Bekannt: {', '.join(WERKZEUGE)}")
+    current = set(DEFAULT_TOOLS)
+    named = set()  # what the user explicitly asked for
+    if requested:
+        parts = [t for t in requested.replace(",", " ").split() if t]
+        replaced = False
+        for part in parts:
+            op, name = (part[0], part[1:]) if part[0] in "+-" else ("=", part)
+            if name not in TOOLS:
+                raise ConfigError(f"Unknown tool '{name}'. Known: {', '.join(TOOLS)}")
             if op == "=":
-                if not ersetzt:
-                    aktuell = set()
-                    ersetzt = True
-                aktuell.add(name)
-                genannt.add(name)
+                if not replaced:
+                    current = set()
+                    replaced = True
+                current.add(name)
+                named.add(name)
             elif op == "+":
-                aktuell.add(name)
-                genannt.add(name)
+                current.add(name)
+                named.add(name)
             else:
-                aktuell.discard(name)
+                current.discard(name)
 
-    fehlt = aktuell - runner.kann
-    verlangt_aber_unmoeglich = fehlt & genannt
-    if verlangt_aber_unmoeglich:
-        raise KonfigFehler(
-            f"Runner '{runner.name}' kann {', '.join(sorted(verlangt_aber_unmoeglich))} nicht steuern. "
-            f"Verweigert, statt still weniger zu tun. Kann: {', '.join(sorted(runner.kann))}"
+    missing = current - runner.can
+    requested_but_impossible = missing & named
+    if requested_but_impossible:
+        raise ConfigError(
+            f"Runner '{runner.name}' cannot control {', '.join(sorted(requested_but_impossible))}. "
+            f"Refused instead of silently doing less. It can: {', '.join(sorted(runner.can))}"
         )
-    aktuell -= fehlt  # nur Standard-Werkzeuge schrumpfen, ohne dass es jemand verlangt hat
+    current -= missing  # only default tools shrink, when nobody asked for them
 
-    unverboten = runner.nicht_verbietbar - aktuell
-    if unverboten and runner.in_sandbox:
-        aktuell |= unverboten  # läuft in der Sandbox des Runners; die Werkzeugzeile des Laufs zeigt es offen
-        unverboten = set()
-    if unverboten:
-        raise KonfigFehler(
-            f"Runner '{runner.name}' hat {', '.join(sorted(unverboten))} immer. "
-            f"Bitte ausdrücklich zulassen: --werkzeuge +{sorted(unverboten)[0]}"
+    not_forbidden = runner.cannot_forbid - current
+    if not_forbidden and runner.in_sandbox:
+        current |= not_forbidden  # runs inside the runner's sandbox; the run's tools line shows it openly
+        not_forbidden = set()
+    if not_forbidden:
+        raise ConfigError(
+            f"Runner '{runner.name}' always has {', '.join(sorted(not_forbidden))}. "
+            f"Please allow it explicitly: --tools +{sorted(not_forbidden)[0]}"
         )
-    return tuple(w for w in WERKZEUGE if w in aktuell)
+    return tuple(w for w in TOOLS if w in current)

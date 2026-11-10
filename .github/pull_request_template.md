@@ -1,8 +1,8 @@
-## Was ändert sich, und warum?
+## What changes, and why?
 
-## Geprüft
+## Checked
 
-- [ ] `python3 -m unittest discover -s tests` ist grün
-- [ ] Neue Flags stehen im Parser, bevor sie in `commands/`, `agents/` oder `skills/` dokumentiert werden
-- [ ] Version in `lib/omni_agent/__init__.py` und `.claude-plugin/plugin.json` gleich und erhöht, wenn Nutzer die Änderung bekommen sollen
-- [ ] Kein Schlüssel, kein persönlicher Pfad im Diff
+- [ ] `python3 -m unittest discover -s tests` is green
+- [ ] New flags are in the parser before they are documented in `commands/`, `agents/` or `skills/`
+- [ ] Version in `lib/omni_agent/__init__.py` and `.claude-plugin/plugin.json` is equal, and raised if users should get the change
+- [ ] No key, no personal path in the diff

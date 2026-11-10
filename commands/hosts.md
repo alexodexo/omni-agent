@@ -1,5 +1,5 @@
 ---
-description: Zeigt die Fernziele (Mac mini, Server per ssh/Tailscale), auf denen Omni-Agent Läufe mit --host ausführen kann
+description: Shows the remote targets (Mac mini, servers via ssh/Tailscale) on which Omni-Agent can execute runs with --host
 argument-hint: '[test NAME]'
 disable-model-invocation: true
 allowed-tools: Bash(omni-agent:*)
@@ -7,4 +7,4 @@ allowed-tools: Bash(omni-agent:*)
 
 !`omni-agent host $ARGUMENTS`
 
-Gib die Ausgabe knapp wieder. Ziele anlegen oder installieren macht die Nutzerin selbst im Terminal (`omni-agent host add NAME --ssh benutzer@adresse`, `omni-agent host install NAME`); Schlüssel und Anmeldungen richtet sie auf dem Ziel selbst ein, nie im Chat. Ohne Argument zeigt der Befehl die Liste (`list`); für `test NAME` sagt er, was auf dem Ziel fehlt.
+Pass the output on briefly. The user adds or installs targets in the terminal (`omni-agent host add NAME --ssh user@address`, `omni-agent host install NAME`); keys and logins are set up by the user on the target itself, never in chat. Without an argument the command shows the list (`list`); for `test NAME` it says what is missing on the target.

@@ -1,4 +1,4 @@
-"""Omni-Agent: Hintergrund-Agents mit austauschbarem Anbieter und austauschbarer Agent-CLI."""
+"""Omni-Agent: background agents with a swappable provider and a swappable agent CLI."""
 from __future__ import annotations
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"

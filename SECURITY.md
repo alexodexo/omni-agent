@@ -1,18 +1,18 @@
-# Sicherheit
+# Security
 
-## Lücke melden
+## Reporting a vulnerability
 
-Bitte **nicht** als öffentliches Issue. Nutze [Private Vulnerability Reporting](https://github.com/alexodexo/omni-agent/security/advisories/new) auf GitHub. Du bekommst eine Antwort, sobald es möglich ist.
+Please do **not** open a public issue. Use [Private Vulnerability Reporting](https://github.com/alexodexo/omni-agent/security/advisories/new) on GitHub. You will get a reply as soon as possible.
 
-## Was Omni-Agent schützt
+## What Omni-Agent protects
 
-- Jeder Lauf startet in einer sauberen Umgebung und bekommt nur den einen Schlüssel, den er braucht.
-- Schlüssel liegen in `~/.omni-agent/env` (Rechte 600) und werden in Logs geschwärzt. Omni-Agent verweigert die Datei, wenn andere sie lesen können.
-- Standard ohne Shell. Im Projektmodus lesen Agenten nur, solange du `--schreibend` nicht setzt.
-- Der Review sendet nichts, wenn der Diff mögliche Geheimnisse oder `.env`-Dateien enthält.
+- Every run starts in a clean environment and gets only the one key it needs.
+- Keys live in `~/.omni-agent/env` (mode 600) and are redacted in logs. Omni-Agent refuses the file if others can read it.
+- No shell by default. In project mode, agents only read unless you set `--write`.
+- Review sends nothing if the diff contains possible secrets or `.env` files.
 
-Die vollständige Liste steht im Abschnitt [Sicherheit der README](README.md#sicherheit).
+The full list is in the [Security section of the README](README.md#security).
 
-## Was nicht geschützt ist
+## What is not protected
 
-Alles, was du in einen Auftrag schreibst, geht an den gewählten Anbieter. Den Datenort zeigt `omni-agent anbieter`.
+Everything you write in a task goes to the chosen provider. `omni-agent providers` shows the data location.
