@@ -1,34 +1,117 @@
-# Omni-Agent
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Omni-Agent: Ein Claude, viele Modelle" width="100%">
+</p>
 
-Hintergrund-Agents mit **austauschbarem Modell-Anbieter** und **austauschbarer Agent-CLI**.
+<p align="center">
+  <a href="LICENSE"><img alt="Lizenz MIT" src="https://img.shields.io/badge/Lizenz-MIT-22d3ee?style=flat-square"></a>
+  <img alt="Version 1.1.1" src="https://img.shields.io/badge/Version-1.1.1-a78bfa?style=flat-square">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
+  <img alt="Claude Code Plugin" src="https://img.shields.io/badge/Claude_Code-Plugin-d97757?style=flat-square">
+  <img alt="Plattformen" src="https://img.shields.io/badge/macOS_%C2%B7_Linux_%C2%B7_WSL-grey?style=flat-square">
+  <img alt="Keine Abhängigkeiten" src="https://img.shields.io/badge/Abh%C3%A4ngigkeiten-0-success?style=flat-square">
+</p>
 
-Du gibst einen Auftrag, Omni-Agent startet damit einen zweiten Agenten (zum Beispiel mit DeepSeek, Kimi oder einem lokalen Ollama-Modell), wartet, bis dieser `bericht.md` geschrieben hat, und gibt dir den Bericht zurück. Dein Haupt-Claude arbeitet währenddessen weiter.
+<p align="center">
+  <b>Dein Claude delegiert Aufgaben an andere Modelle, andere Konten und Codex, im Hintergrund, ohne dass du wartest.</b><br>
+  DeepSeek, Kimi, Ollama, EUrouter, Codex und beliebig viele Claude-Konten. Ein Befehl, ein Bericht.
+</p>
 
+<p align="center">
+  <a href="#installieren">Installieren</a> ·
+  <a href="#so-sieht-das-aus">Demo</a> ·
+  <a href="#was-du-bekommst">Funktionen</a> ·
+  <a href="#qualität-je-anbieter">Qualität je Anbieter</a> ·
+  <a href="#benutzen">Befehle</a> ·
+  <a href="docs/02-architektur.md">Architektur</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+---
+
+## Warum Omni-Agent?
+
+- **Parallel statt nacheinander.** Recherche, Vergleich, Zweitmeinung oder Entwurf laufen im Hintergrund, während dein Haupt-Claude weiterarbeitet. Endet der Lauf, bekommst du eine Benachrichtigung.
+- **Das richtige Modell für die Aufgabe.** Billig und schnell mit DeepSeek, lokal und privat mit Ollama, EU-gehostet mit EUrouter, die Zweitmeinung von Codex oder von einem anderen Claude-Konto mit eigenem Kontingent.
+- **Claude entscheidet selbst.** Der Subagent `omni-agent:lauf` ist so beschrieben, dass Claude ihn von allein ruft, auch in einem `/goal`. Einen Fremdanbieter wählt Claude nie ungefragt.
+- **Sicher gebaut.** Saubere Umgebung je Lauf, nur der eine nötige Schlüssel, Standard ohne Shell, Geheimnis-Sperre im Review. Schlüssel liegen in einer Datei mit Rechten 600 und gehen nie durch den Chat.
+- **Null Abhängigkeiten.** Python-Standardbibliothek, ein Plugin, kein Server, keine Datenbank.
+
+## So sieht das aus
+
+*Beispiele, Ausgabe gekürzt.*
+
+```text
+> /omni-agent:run --konto felipe Vergleiche drei Methoden zur Qualitätssicherung von Unterricht
+
+● omni-agent:lauf   Lauf 20261111-004456-claude-felipe gestartet (losgelöst)
+  … du arbeitest weiter …
+● Lauf fertig: bericht.md liegt bereit
+  Ergebnis · Befunde · Belege · Annahmen und offene Punkte
 ```
-Claude Code (du) ──/omni-agent:run──► Subagent omni-agent:lauf ──► omni-agent run (losgelöst)
-        ▲  oder Claude delegiert selbst            (dünner Weiterleiter)     ├─ Anbieter  (wessen Modell, wo, welcher Schlüssel)
-        │                                                                    └─ Runner    (welche Agent-CLI führt aus)
-        └──── Benachrichtigung, wenn der Lauf endet ◄──────── ~/.omni-agent/laeufe/<zeit>-<anbieter>/bericht.md
+
+```text
+> /omni-agent:review --konto fbs --adversarial
+
+## Urteil
+nacharbeiten, ein kritischer Befund
+
+### [kritisch] Token wird im Log ausgegeben
+- Stelle: lib/auth.py:88   - Sicherheit: 0.9
+- Empfehlung: Wert vor dem Schreiben schwärzen
 ```
 
-| Schicht | Auswahl | Standard |
-|---|---|---|
-| **Anbieter** | DeepSeek, OpenRouter, Kimi, Ollama, EUrouter, Nvidia, Codex (OpenAI-Anmeldung), beliebig viele benannte Claude-Konten | – |
-| **Runner** | Claude Code, opencode, codex, dsh (experimentell) | Claude Code |
+## Was du bekommst
+
+| | |
+|---|---|
+| **Delegation von selbst** | Subagent `omni-agent:lauf` übernimmt abgegrenzte Teilaufgaben, `/omni-agent:run` startet ihn auf Zuruf |
+| **Läufe im Hintergrund** | Losgelöste Prozesse, `status`, `result`, `cancel`, Benachrichtigung am Ende, Zuordnung zur Claude-Sitzung |
+| **Review mit Zweitmeinung** | Git-Diff an ein anderes Modell oder Konto, festes Berichtsschema, `adversarial-review` stellt die Lösung infrage |
+| **Projektmodus** | Der Agent arbeitet im echten Projektordner, nur lesend oder mit `--schreibend`, ohne Commit und Push |
+| **Review-Gate** | Optional (aus): ein zweites Modell prüft ungeprüfte Änderungen, bevor eine Sitzung endet |
+| **Beliebig viele Claude-Konten** | Jedes mit Namen, Schlüssel und eigenem Kontingent, mit Auslastungsanzeige (`/omni-agent:konten`) |
+| **Austauschbare Agent-CLI** | Claude Code, opencode, codex, dsh. Omni-Agent prüft, welche CLI zu welchem Anbieter passt |
+| **Eigene Anbieter** | Eine JSON-Datei in `~/.omni-agent/providers.d/` genügt |
+
+```mermaid
+flowchart LR
+    U["Du in Claude Code"] -->|"/omni-agent:run oder Claude delegiert"| S["Subagent omni-agent:lauf"]
+    S --> K["omni-agent run (losgelöst)"]
+    K --> A["Anbieter<br/>DeepSeek, Kimi, Ollama, EUrouter,<br/>Codex, Claude-Konten"]
+    K --> R["Runner<br/>Claude Code, opencode, codex"]
+    A --> B[("bericht.md")]
+    R --> B
+    B -->|"Benachrichtigung"| U
+```
 
 ## Installieren
 
 **Schnellster Weg:** Gib Claude Code diese Repo-Adresse und sage „Installiere mir das". Claude folgt dann [INSTALL.md](INSTALL.md).
 
-**Oder selbst, als Claude-Code-Plugin:**
+**Als Claude-Code-Plugin:**
 
-```
+```text
 /plugin marketplace add alexodexo/omni-agent
 /plugin install omni-agent@omni-agent
 /omni-agent:setup
 ```
 
-**Oder ohne Plugin** (funktioniert auch ohne Claude, im Terminal): Repo klonen, dann `bin/omni-agent setup`. Voraussetzung: Python 3.10 oder neuer (macOS, Linux, WSL) und mindestens eine Agent-CLI (Standard: [Claude Code](https://claude.com/claude-code)).
+**Ohne Plugin** (auch ohne Claude, im Terminal): Repo klonen, dann `bin/omni-agent setup`. Voraussetzung: Python 3.10 oder neuer (macOS, Linux, WSL) und mindestens eine Agent-CLI (Standard: [Claude Code](https://claude.com/claude-code)).
+
+## Qualität je Anbieter
+
+Läufe, Berichte, Hintergrund, `status`/`result`/`cancel`, Sitzungszuordnung und Review sind **für alle Anbieter dieselbe Strecke**. Unterschiede gibt es nur dort, wo ein Anbieter etwas technisch nicht hergibt:
+
+| Fähigkeit | Claude-Konten | Codex (Anmeldung) | DeepSeek, Kimi, Ollama, OpenRouter | EUrouter, Nvidia |
+|---|:-:|:-:|:-:|:-:|
+| Lauf im Hintergrund, Bericht, Benachrichtigung | ✅ | ✅ | ✅ | ✅ |
+| Review und adversarial Review | ✅ | ✅ | ✅ | ✅ |
+| Nachfrage an denselben Agenten (`--fortsetzen`) | ✅ | ✅ | ✅ mit Runner `claude` | – |
+| **Projektmodus** (im echten Projekt, lesend oder schreibend) | ✅ | ✅ | – bewusst gesperrt | – bewusst gesperrt |
+| Auslastungsanzeige | ✅ | – | – | – |
+| **Live getestet** | ✅ | ✅ | nur DeepSeek | nein |
+
+Der Projektmodus ist für Fremdanbieter absichtlich aus: Dort würde ein Modell mit unbekanntem Datenort dein Projekt lesen. Was „live getestet" heißt und was nur nach Herstellerdoku gebaut ist, steht in der [Anbietertabelle](#anbieter-und-datenschutz).
 
 ## Benutzen
 

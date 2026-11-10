@@ -1,0 +1,15 @@
+name: Idee oder Anbieter vorschlagen
+description: Neue Funktion, neuer Anbieter, neue Agent-CLI
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idee
+    attributes:
+      label: Was soll möglich werden, und wofür brauchst du es?
+    validations:
+      required: true
+  - type: textarea
+    id: quelle
+    attributes:
+      label: Bei einem Anbieter: Herstellerdokumentation
+      description: Adresse der Anthropic-, OpenAI- oder Responses-kompatiblen Schnittstelle, Datenort, Schlüsselname.

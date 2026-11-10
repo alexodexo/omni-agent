@@ -1,0 +1,24 @@
+name: Fehler melden
+description: Etwas läuft nicht wie dokumentiert
+labels: [bug]
+body:
+  - type: textarea
+    id: was
+    attributes:
+      label: Was ist passiert?
+      description: Befehl, erwartetes und tatsächliches Ergebnis.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Ausgabe von `omni-agent doctor`
+      description: Bitte vorher prüfen, dass kein Schlüssel darin steht. Doctor zeigt nur „gesetzt“ oder „fehlt“.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: macOS 15, Python 3.12, Claude Code 2.1.x
