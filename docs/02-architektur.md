@@ -129,9 +129,14 @@ Der Exit-Code des Runners ist nur Zusatzsignal: er ist je Runner unterschiedlich
 | `omni-agent anbieter`, `omni-agent runner` | Listen |
 | `omni-agent extras litellm install | start | stop` | optionaler Übersetzer, Abschnitt 7 |
 
-**Slash-Befehle (Plugin):** `/omni-agent:setup`, `:doctor`, `:run`, `:status`; dazu die Skill `delegieren` (Claude schlägt von selbst
-einen Fremdagent vor, wenn Kosten, Parallelität oder Modellvielfalt es nahelegen). `:run` ist `disable-model-invocation: true`
-und trägt `allowed-tools: Bash(omni-agent *)`; der Skill-Text weist Claude an, den Befehl **im Hintergrund** zu starten.
+**Plugin-Hülle (ab 1.1.1):** Befehle in `commands/` (`run`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `konten`, `doctor`, `setup`), der
+Subagent `agents/lauf.md` (`omni-agent:lauf`, Modell Sonnet, Werkzeug nur Bash, dünner Weiterleiter), drei interne Skills und drei Hooks.
+`:run` ruft den Subagenten über das Agent-Werkzeug (nie über Skill, das würde den Befehl erneut aufrufen); Claude kann den Subagenten auch
+selbst rufen, die Beschreibung der Agentdatei ist der Auslöser. Der Subagent startet genau einen Lauf mit `omni-agent run --warten 540`
+(losgelöster Prozess, wartet höchstens 540 s, damit das Bash-Limit von 10 Minuten nie greift), wartet bei `[läuft noch]` mit
+`omni-agent warte` weiter und gibt die Ausgabe unverändert zurück. Hooks: `SessionStart` schreibt `OMNI_AGENT_SITZUNG` in `CLAUDE_ENV_FILE`
+(damit auch Bash-Befehle der Subagenten die Sitzung kennen), `SessionEnd` beendet laufende Läufe der Sitzung (nicht bei `/clear`), `Stop` meldet
+laufende Läufe und führt, wenn eingeschaltet, das Review-Gate aus (`lib/omni_agent/haken.py`).
 
 ## 7. Extra: LiteLLM (optional)
 
@@ -176,7 +181,7 @@ Bevorzugt wird immer: **anderer Runner statt Übersetzer** (EUrouter und Nvidia 
 |---|---|---|
 | 1 | Kern + Runner `claude` + Anbieter `deepseek`: Portierung des heutigen Wrappers | Lauf mit Bericht, `status.json` stimmt |
 | 2 | `providers.json` komplett, `doctor`, `setup`, Passungs-Matrix | `doctor` zeigt die Matrix, fehlender Key wird sauber gemeldet |
-| 3 | Plugin-Hülle: Manifeste, 5 Skills | `claude plugin validate --strict` grün, `/omni-agent:run` startet einen Lauf in `claude --plugin-dir` |
+| 3 | Plugin-Hülle: Manifeste, Agent, Befehle, interne Skills, Hooks | `claude plugin validate --strict` grün, `/omni-agent:run` startet einen Lauf in `claude --plugin-dir` |
 | 4 | `INSTALL.md`, `AGENTS.md`, README mit Datenschutz-Tabelle | Eine frische Claude-Sitzung installiert und prüft nur anhand der `INSTALL.md` |
 | 5 | Runner `opencode` | Lauf gegen EUrouter oder Nvidia ohne Proxy |
 | 6 | Runner `codex` | Lauf gegen einen Responses-Endpunkt |

@@ -12,10 +12,13 @@ from pathlib import Path
 from . import VERSION, extras
 from .anbieter import lade_anbieter
 from .konfig import (
-    EXIT_KONFIG, KonfigFehler, WURZEL, setze_standard_anbieter, standard_anbieter, env_datei, hole_schluessel, home, laeufe_ordner,
-    lese_schluesseldatei, pruefe_erreichbar,
+    EXIT_KONFIG, KonfigFehler, WURZEL, claude_sitzung, review_gate_an, setze_config, setze_standard_anbieter, standard_anbieter,
+    env_datei, hole_schluessel, home, lese_schluesseldatei, pruefe_erreichbar,
 )
-from .lauf import alle_laeufe, finde_lauf, fuehre_aus, lies_status
+from .lauf import (
+    alle_laeufe, dauer_text, drucke_bericht, finde_lauf, fuehre_aus, laeufe_im_blick, lies_status, melde, pruefe_lebt,
+    prozess_ist_omni_agent, starte_losgeloest, warte_und_melde,
+)
 from .runner import RUNNER, passt
 
 SHIM_MARKE = "omni-agent-shim"
@@ -119,6 +122,7 @@ def cmd_doctor(args) -> int:
                 print(f"      Endpunkt erreichbar: {a.base_url}")
             except KonfigFehler as fehler:
                 print(f"      Endpunkt NICHT erreichbar: {fehler}")
+    print(f"\nReview-Gate: {'AN' if review_gate_an() else 'aus'} | Standard-Anbieter: {standard_anbieter() or 'keiner'} | Claude-Sitzung: {claude_sitzung() or 'nicht erkannt (Hook läuft nur in Claude Code)'}")
     print(f"\n{extras.status_text()}")
     print("\nHinweis: 'geprüft: nein' heißt laut Herstellerdoku gebaut, nicht live ausprobiert. Datenort je Anbieter: omni-agent anbieter")
     return 0 if ok else EXIT_KONFIG
@@ -175,6 +179,15 @@ def cmd_setup(args) -> int:
         print("\nNächste Schritte:\n  1. Anbieter wählen (omni-agent anbieter) und Schlüssel in die Datei eintragen: omni-agent setup --anbieter deepseek")
         print("  2. Prüfen: omni-agent doctor")
         print("  3. Erster Lauf: omni-agent run --text \"Fasse in drei Sätzen zusammen, was ein Hintergrund-Agent ist\" --anbieter deepseek")
+    if args.review_gate == "an":
+        if not standard_anbieter():
+            raise KonfigFehler("Review-Gate braucht einen Anbieter: erst `omni-agent konto standard NAME` setzen.")
+        setze_config("review_gate", True)
+        print(f"Review-Gate AN: Vor dem Beenden einer Claude-Sitzung wird jeder neue Diff ungeprüfter Änderungen an {standard_anbieter()} gesendet "
+              "(Kosten und Datenabfluss beachten). Aus: omni-agent setup --review-gate aus")
+    elif args.review_gate == "aus":
+        setze_config("review_gate", None)
+        print("Review-Gate AUS.")
     if args.oeffnen:
         os.system(f"open -t {datei}" if sys.platform == "darwin" else f"${{EDITOR:-nano}} {datei}")
     print()
@@ -199,7 +212,26 @@ def cmd_run(args) -> int:
         print(f"Kein Anbieter angegeben, Standard: {args.anbieter}")
     if args.fortsetzen is not None and args.text is None and not args.auftrag:
         raise KonfigFehler("--fortsetzen braucht die Nachfrage: --text \"…\"")
+    if args.hintergrund or args.warten is not None:
+        return starte_losgeloest(_ohne_flags(args._argv), args.warten)
     return fuehre_aus(args)
+
+
+def _ohne_flags(argv: list) -> list:
+    """Die Argumente des Befehls ohne --hintergrund/--warten (für den losgelösten Kindprozess)."""
+    aus, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--hintergrund":
+            i += 1
+        elif a == "--warten":
+            i += 2
+        elif a.startswith("--warten="):
+            i += 1
+        else:
+            aus.append(a)
+            i += 1
+    return aus
 
 
 # ---------- review / cancel / result ----------
@@ -216,43 +248,29 @@ def cmd_review(args) -> int:
         if not args.anbieter:
             raise KonfigFehler("Kein Anbieter angegeben und kein Standard gesetzt (--konto/--anbieter oder: omni-agent konto standard NAME)")
         print(f"Kein Anbieter angegeben, Standard: {args.anbieter}")
+    if (args.hintergrund or args.warten is not None) and not args.vorschau:
+        return starte_losgeloest(_ohne_flags(args._argv), args.warten)
     return fuehre_review_aus(args)
-
-
-def _prozess_ist_omni_agent(pid) -> bool:
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ValueError, TypeError):
-        return False
-    try:
-        erg = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return "omni-agent" in erg.stdout or "omni_agent" in erg.stdout
 
 
 def cmd_cancel(args) -> int:
     if args.lauf:
         ordner = finde_lauf(args.lauf)
     else:
-        laufende = [p for p in alle_laeufe() if (lies_status(p) or {}).get("zustand") == "arbeitet"]
+        laufende = [p for p in laeufe_im_blick() if (lies_status(p) or {}).get("zustand") == "arbeitet"]
         if not laufende:
             print("Kein Lauf arbeitet gerade.")
             return 0
         ordner = laufende[0]
-    status = lies_status(ordner) or {}
+    war_arbeitend = (lies_status(ordner) or {}).get("zustand") == "arbeitet"
+    status = pruefe_lebt(ordner)
     if status.get("zustand") != "arbeitet":
-        print(f"{ordner.name}: läuft nicht ({status.get('zustand', 'unbekannt')}).")
+        if war_arbeitend:
+            print(f"{ordner.name}: Prozess war schon weg, Status auf 'fehler' gesetzt.")
+        else:
+            print(f"{ordner.name}: läuft nicht ({status.get('zustand', 'unbekannt')}).")
         return 0
-    pid = status.get("pid")
-    if not _prozess_ist_omni_agent(pid):
-        # Prozess ist weg (Rechner neu gestartet, hart beendet): Status nachziehen
-        from .lauf import schreibe_status
-        status.update(zustand="fehler", ende=int(time.time()), bemerkung="Prozess nicht mehr vorhanden")
-        schreibe_status(ordner, **status)
-        print(f"{ordner.name}: Prozess war schon weg, Status auf 'fehler' gesetzt.")
-        return 0
-    os.kill(int(pid), signal.SIGTERM)
+    os.kill(int(status["pid"]), signal.SIGTERM)
     for _ in range(40):
         time.sleep(0.5)
         if (lies_status(ordner) or {}).get("zustand") != "arbeitet":
@@ -266,79 +284,96 @@ def cmd_result(args) -> int:
     if args.lauf:
         ordner = finde_lauf(args.lauf)
     else:
-        mit_bericht = [p for p in alle_laeufe() if (p / "bericht.md").is_file()]
+        mit_bericht = [p for p in laeufe_im_blick() if (p / "bericht.md").is_file()]
         if not mit_bericht:
             raise KonfigFehler("Noch kein Lauf mit Bericht. Läufe: omni-agent status")
         ordner = mit_bericht[0]
     bericht = ordner / "bericht.md"
-    status = lies_status(ordner) or {}
+    status = pruefe_lebt(ordner)
     if not bericht.is_file():
         raise KonfigFehler(f"{ordner.name}: kein Bericht ({status.get('zustand', 'unbekannt')}). Siehe: omni-agent status {ordner.name}")
     if args.pfad:
         print(bericht)
         return 0
     if status.get("zustand") == "arbeitet":
-        print(f"[Lauf arbeitet noch, dies ist ein Zwischenstand]\n")
-    print(bericht.read_text(encoding="utf-8"))
-    print(f"\n---\nLauf: {ordner.name} | {status.get('anbieter', '?')} / {status.get('modell', '?')}"
-          + (" | Nachfrage möglich: omni-agent run --fortsetzen " + ordner.name.split('-')[0] + "-" + ordner.name.split('-')[1] + " --text \"…\"" if status.get("sitzung") else ""))
+        print("[Lauf arbeitet noch, dies ist ein Zwischenstand]\n")
+    drucke_bericht(ordner, status)
+    return 0
+
+
+def cmd_warte(args) -> int:
+    """Wartet auf einen Lauf (höchstens --max Sekunden) und meldet den Stand; für Weiterleiter, die Läufe losgelöst starten."""
+    return warte_und_melde(finde_lauf(args.lauf), args.max)
+
+
+def cmd_fortsetzbar(args) -> int:
+    """Gibt es einen Lauf dieser Claude-Sitzung, an den eine Nachfrage gehen könnte? (Für die Rückfrage „fortsetzen oder neu“.)"""
+    sitzung = claude_sitzung()
+    kandidaten = alle_laeufe(sitzung) if sitzung else []
+    for ordner in kandidaten:
+        status = pruefe_lebt(ordner)
+        if status.get("sitzung") and status.get("zustand") in ("fertig", "fehler", "abgebrochen") and status.get("art", "run") == "run":
+            antwort = {"available": True, "lauf": ordner.name, "anbieter": status.get("anbieter"), "modell": status.get("modell"),
+                       "zustand": status.get("zustand"), "auftrag": status.get("auftrag")}
+            break
+    else:
+        antwort = {"available": False}
+    print(json.dumps(antwort, ensure_ascii=False))
     return 0
 
 
 # ---------- status ----------
 
-def _lies_status(ordner: Path) -> dict | None:
-    try:
-        return json.loads((ordner / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _alle_laeufe() -> list:
-    basis = laeufe_ordner()
-    if not basis.is_dir():
-        return []
-    return sorted((p for p in basis.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True)
+def _zeile(ordner: Path) -> dict:
+    s = pruefe_lebt(ordner)
+    return {"lauf": ordner.name, "zustand": s.get("zustand", "unbekannt"), "art": s.get("art", "run"), "anbieter": s.get("anbieter"),
+            "modell": s.get("modell"), "runden": s.get("runden"), "dauer": dauer_text(s), "auftrag": s.get("auftrag") or "",
+            "fortsetzbar": bool(s.get("sitzung")), "projekt": s.get("projekt")}
 
 
 def cmd_status(args) -> int:
-    laeufe = _alle_laeufe()
     if args.lauf:
-        treffer = [p for p in laeufe if args.lauf in p.name]
-        if not treffer:
-            raise KonfigFehler(f"Kein Lauf passt zu '{args.lauf}'")
-        ordner = treffer[0]
-        status = _lies_status(ordner) or {"zustand": "unbekannt"}
+        ordner = finde_lauf(args.lauf)
+        status = pruefe_lebt(ordner) or {"zustand": "unbekannt"}
         if args.json:
             print(json.dumps({**status, "ordner": str(ordner), "bericht": str(ordner / "bericht.md") if (ordner / "bericht.md").exists() else None}, ensure_ascii=False))
         else:
             print(f"Lauf:    {ordner}")
-            for k in ("zustand", "anbieter", "modell", "runner", "runden", "exitcode", "bemerkung"):
+            for k in ("zustand", "art", "anbieter", "modell", "runner", "runden", "exitcode", "bemerkung", "projekt", "auftrag"):
                 if status.get(k) is not None:
                     print(f"{k.capitalize() + ':':<9}{status[k]}")
-            if status.get("start"):
-                ende = status.get("ende") or int(time.time())
-                print(f"Dauer:   {ende - status['start']}s")
+            print(f"Dauer:   {dauer_text(status)}")
             print(f"Bericht: {ordner / 'bericht.md' if (ordner / 'bericht.md').exists() else 'noch nicht da'}")
             if status.get("sitzung"):
                 print("Fortsetzbar: ja (omni-agent run --fortsetzen LAUF --text \"Nachfrage\")")
+            if status.get("zustand") == "arbeitet":
+                print("Abbrechen: omni-agent cancel " + ordner.name)
         return 0
-    zeilen = []
-    for p in laeufe[: args.anzahl]:
-        s = _lies_status(p) or {}
-        dauer = ""
-        if s.get("start"):
-            dauer = f"{(s.get('ende') or int(time.time())) - s['start']}s"
-        zeilen.append({"lauf": p.name, "zustand": s.get("zustand", "unbekannt"), "anbieter": s.get("anbieter"),
-                       "modell": s.get("modell"), "runden": s.get("runden"), "dauer": dauer})
+    sitzung = claude_sitzung()
+    quelle = alle_laeufe() if args.alle or not sitzung else (alle_laeufe(sitzung) or alle_laeufe())
+    zeilen = [_zeile(p) for p in quelle[: args.anzahl]]
     if args.json:
         print(json.dumps(zeilen, ensure_ascii=False))
         return 0
     if not zeilen:
         print("Noch keine Läufe.")
+        return 0
+    if args.md:
+        print("| Lauf | Zustand | Anbieter / Modell | Dauer | Auftrag |\n|---|---|---|---|---|")
+        for z in zeilen:
+            auftrag = z["auftrag"][:70].replace("|", "/")
+            print(f"| `{z['lauf']}` | {z['zustand']}{' (Review)' if z['art'] == 'review' else ' (Gate)' if z['art'] == 'gate' else ''} | "
+                  f"{z['anbieter'] or '-'} / {z['modell'] or '-'} | {z['dauer'] or '-'} | {auftrag} |")
+        print("\nBericht: `omni-agent result LAUF` · Abbrechen: `omni-agent cancel LAUF` · Nachfrage: `omni-agent run --fortsetzen LAUF --text \"…\"`")
+        return 0
     for z in zeilen:
         print(f"{z['lauf']:<34}{z['zustand']:<12}{(z['anbieter'] or '-') + ' / ' + (z['modell'] or '-'):<44}{z['dauer']}")
     return 0
+
+
+def cmd_hook(args) -> int:
+    from .haken import fuehre_haken_aus
+    return fuehre_haken_aus(args.name)
 
 
 # ---------- konto ----------
@@ -455,6 +490,7 @@ def baue_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("setup", help="Ordner, Schlüsseldatei und Befehl einrichten, dann prüfen")
     s.add_argument("--anbieter", help="Anleitung für diesen Anbieter ausgeben")
     s.add_argument("--oeffnen", action="store_true", help="Schlüsseldatei im Editor öffnen")
+    s.add_argument("--review-gate", choices=["an", "aus"], help="Prüfung vor dem Beenden einer Claude-Sitzung ein- oder ausschalten (Standard: aus)")
     s.set_defaults(fn=cmd_setup)
 
     s = sub.add_parser("doctor", help="Was ist da, was fehlt (Runner, Schlüssel, Passung)")
@@ -476,6 +512,10 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--ueber-litellm", action="store_true", help="OpenAI-Anbieter für Claude Code über das Extra LiteLLM übersetzen")
     s.add_argument("--fortsetzen", nargs="?", const="", default=None, metavar="LAUF", help="Nachfrage an einen früheren Lauf (ohne Namen: der letzte); --text ist die Nachfrage")
     s.add_argument("--aufwand", choices=["minimal", "low", "medium", "high", "xhigh"], help="Denkaufwand (nur Codex)")
+    s.add_argument("--projekt", nargs="?", const="", default=None, metavar="ORDNER", help="im Projektordner arbeiten (ohne Wert: aktuelles Verzeichnis), nur lesen; nur mit Claude-Konten und Codex")
+    s.add_argument("--schreibend", action="store_true", help="mit --projekt: Dateien im Projekt dürfen geändert werden")
+    s.add_argument("--hintergrund", action="store_true", help="als losgelöster Prozess starten und sofort den Laufnamen melden")
+    s.add_argument("--warten", type=int, metavar="SEK", help="losgelöst starten und höchstens so lange auf das Ende warten (meldet dann Stand oder Bericht)")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("review", help="Git-Änderungen von einem anderen Modell prüfen lassen (der Diff verlässt den Rechner)")
@@ -489,6 +529,8 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--aufwand", choices=["minimal", "low", "medium", "high", "xhigh"], help="Denkaufwand (nur Codex)")
     s.add_argument("--max-runden", type=int, default=10)
     s.add_argument("--zeit", type=int, default=900)
+    s.add_argument("--hintergrund", action="store_true", help="als losgelöster Prozess starten und sofort den Laufnamen melden")
+    s.add_argument("--warten", type=int, metavar="SEK", help="losgelöst starten und höchstens so lange auf das Ende warten")
     s.add_argument("--vorschau", action="store_true", help="nur zeigen, was gesendet würde; nichts senden")
     s.add_argument("--trotzdem", action="store_true", help="auch senden, wenn der Diff mögliche Geheimnisse enthält")
     s.set_defaults(fn=cmd_review)
@@ -502,11 +544,24 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--pfad", action="store_true", help="nur den Pfad zur bericht.md ausgeben")
     s.set_defaults(fn=cmd_result)
 
-    s = sub.add_parser("status", help="Läufe anzeigen")
+    s = sub.add_parser("status", help="Läufe anzeigen (dieser Claude-Sitzung, sonst alle)")
     s.add_argument("lauf", nargs="?", help="Teil des Laufnamens; ohne Angabe die letzten Läufe")
     s.add_argument("--anzahl", type=int, default=10)
+    s.add_argument("--alle", action="store_true", help="auch Läufe anderer Sitzungen")
+    s.add_argument("--md", action="store_true", help="als Markdown-Tabelle")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("warte", help="Auf einen Lauf warten (höchstens --max Sekunden) und Stand oder Bericht melden")
+    s.add_argument("lauf", nargs="?", help="Teil des Laufnamens; ohne Angabe der neueste")
+    s.add_argument("--max", type=int, default=540, help="Sekunden (Standard 540, unter dem 10-Minuten-Limit des Bash-Werkzeugs)")
+    s.set_defaults(fn=cmd_warte)
+
+    sub.add_parser("fortsetzbar", help="JSON: gibt es einen Lauf dieser Sitzung, der fortgesetzt werden kann?").set_defaults(fn=cmd_fortsetzbar)
+
+    s = sub.add_parser("hook", help="Einstieg für die Hooks des Plugins (liest JSON von stdin)")
+    s.add_argument("name", choices=["start", "ende", "stopp"])
+    s.set_defaults(fn=cmd_hook)
 
     sub.add_parser("anbieter", help="Anbieter mit Datenort auflisten").set_defaults(fn=cmd_anbieter)
     s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove, standard")
@@ -534,6 +589,7 @@ def baue_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = baue_parser().parse_args(argv)
+    args._argv = list(argv) if argv is not None else sys.argv[1:]
     if args.befehl == "run" and not args.auftrag and args.text is None:
         print("Auftragsdatei oder --text angeben", file=sys.stderr)
         return EXIT_KONFIG

@@ -454,11 +454,12 @@ class Plugin(unittest.TestCase):
             kopf = (ordner / "SKILL.md").read_text().split("---")[1]
             self.assertIn("description:", kopf, ordner.name)
 
-    def test_run_skill_ist_fuer_claude_aufrufbar_aber_nur_auf_ausdruecklichen_wunsch(self):
-        # Sonst scheitert /goal: ein gesperrter Skill kann von Claude nicht selbst gerufen werden.
-        kopf = (WURZEL / "skills" / "run" / "SKILL.md").read_text().split("---")[1]
-        self.assertNotIn("disable-model-invocation", kopf)
-        self.assertIn("ausdrücklich", kopf)
+    def test_agent_ist_fuer_claude_selbst_rufbar_auch_im_goal(self):
+        # /goal und Hauptfaden dürfen keine gesperrten Befehle rufen. Sie delegieren über den Agent-Typ omni-agent:lauf,
+        # dessen Beschreibung Omni-Agent und die Anbieter nennt, ohne dass die Nutzerin einen Befehl tippen muss.
+        beschreibung = (WURZEL / "agents" / "lauf.md").read_text().split("---")[1]
+        for wort in ("Omni-Agent", "Codex", "fbs, felipe, llc", "Proaktiv", "Nie einen Fremdanbieter"):
+            self.assertIn(wort, beschreibung)
 
 
 class Extras(unittest.TestCase):
@@ -489,6 +490,8 @@ FAKE_CLAUDE = textwrap.dedent("""\
         print("0.0.0 (Fake)"); sys.exit(0)
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "argv.log"), "a") as f:
         f.write(json.dumps(sys.argv[1:]) + "\\n")
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cwd.log"), "a") as f:
+        f.write(os.getcwd() + "\\n")
     print(json.dumps({"type": "system", "subtype": "init", "model": os.environ.get("ANTHROPIC_MODEL"), "session_id": "sess-1"}), flush=True)
     print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "WebSearch", "input": {"query": "test"}}]}}), flush=True)
     print("Zeile mit Geheimnis: " + os.environ.get("ANTHROPIC_AUTH_TOKEN", ""), flush=True)
@@ -497,11 +500,17 @@ FAKE_CLAUDE = textwrap.dedent("""\
         time.sleep(60)
     if modus == "ok":
         open("bericht.md", "w").write("# Bericht\\nFertig\\n" + sys.argv[2][-80:] + "\\n")
-    print(json.dumps({"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 10, "total_cost_usd": 0, "result": "ok"}), flush=True)
+    if modus in ("block", "allow"):
+        open("bericht.md", "w").write(("BLOCK: Datei m.py Zeile 1 ist kaputt" if modus == "block" else "ALLOW: sieht gut aus") + "\\nDetails\\n")
+    if modus == "kurz":
+        time.sleep(2)
+        open("bericht.md", "w").write("# Bericht\\nSpaet fertig\\n")
+    print(json.dumps({"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 10, "total_cost_usd": 0,
+                      "result": "Schlussantwort des Agenten" if modus == "antwort" else "ok"}), flush=True)
 """)
 
 
-class EndeZuEnde(MitHome):
+class Farm(MitHome):
     def setUp(self):
         super().setUp()
         self.bin = Path(self.tmp.name) / "bin"
@@ -522,6 +531,23 @@ class EndeZuEnde(MitHome):
     def letzter_lauf(self) -> Path:
         return sorted((self.home / "laeufe").iterdir())[-1]
 
+    def _repo(self, inhalt="a = 1\n"):
+        repo = Path(self.tmp.name) / "repo"
+        repo.mkdir()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", ".")
+        (repo / "m.py").write_text(inhalt)
+        git("add", ".")
+        git("commit", "-qm", "init")
+        return repo, git
+
+    def _review(self, repo, *args, modus="ok"):
+        (self.bin / "modus").write_text(modus)
+        return subprocess.run([sys.executable, str(BIN), "review", *args], env=dict(self.env), cwd=repo,
+                              capture_output=True, text=True, timeout=60)
+
+
+class EndeZuEnde(Farm):
     def test_lauf_mit_bericht(self):
         erg = self.lauf("run", "--text", "Sag hallo", "--anbieter", "deepseek", "--runner", "claude")
         self.assertEqual(erg.returncode, 0, erg.stderr)
@@ -648,21 +674,6 @@ class EndeZuEnde(MitHome):
         self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "fehler")
 
     # ---- review ----
-    def _repo(self, inhalt="a = 1\n"):
-        repo = Path(self.tmp.name) / "repo"
-        repo.mkdir()
-        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
-        git("init", "-q", ".")
-        (repo / "m.py").write_text(inhalt)
-        git("add", ".")
-        git("commit", "-qm", "init")
-        return repo, git
-
-    def _review(self, repo, *args, modus="ok"):
-        (self.bin / "modus").write_text(modus)
-        return subprocess.run([sys.executable, str(BIN), "review", *args], env=dict(self.env), cwd=repo,
-                              capture_output=True, text=True, timeout=60)
-
     def test_review_gibt_diff_als_material_und_nur_lesen_schreiben(self):
         repo, _ = self._repo()
         (repo / "m.py").write_text("a = 2\n")
@@ -782,6 +793,463 @@ class EndeZuEnde(MitHome):
         (voll / "datei").write_text("x")
         erg = self.lauf("run", "--text", "x", "--anbieter", "deepseek", "--ordner", str(voll))
         self.assertEqual(erg.returncode, 2)
+
+
+# ---------------------------------------------------------------------------
+# Version 1.1: Subagent, Befehle, interne Skills, Hooks, losgelöste Läufe, Projektmodus, Review-Gate
+# ---------------------------------------------------------------------------
+
+def _frontmatter(pfad: Path) -> dict:
+    text = pfad.read_text(encoding="utf-8")
+    assert text.startswith("---\n"), pfad
+    kopf = text.split("---\n", 2)[1]
+    felder, schluessel = {}, None
+    for zeile in kopf.splitlines():
+        if zeile.startswith("  - ") and schluessel:
+            felder.setdefault(schluessel, []).append(zeile[4:].strip())
+        elif ":" in zeile and not zeile.startswith(" "):
+            schluessel, _, wert = zeile.partition(":")
+            felder[schluessel.strip()] = wert.strip() or []
+    return felder
+
+
+def _bash_zeilen(pfad: Path) -> list:
+    """Befehlszeilen `omni-agent …` aus Code-Blöcken und !-Einschüben einer Plugin-Datei."""
+    import re
+    text = pfad.read_text(encoding="utf-8")
+    zeilen = re.findall(r"^!`(.+)`$", text, flags=re.M)
+    for block in re.findall(r"```(?:bash)?\n(.*?)```", text, flags=re.S):
+        zeilen += [z for z in block.splitlines() if z.strip()]
+    return [z.strip() for z in zeilen if "omni-agent" in z]
+
+
+class PluginAufbau(unittest.TestCase):
+    def test_agent_ist_duenner_weiterleiter(self):
+        f = _frontmatter(WURZEL / "agents" / "lauf.md")
+        self.assertEqual(f["name"], "lauf")
+        self.assertEqual(f["tools"], "Bash")
+        self.assertIn("Proaktiv", f["description"])
+        for skill in f["skills"]:
+            self.assertTrue((WURZEL / "skills" / skill / "SKILL.md").is_file(), skill)
+        text = (WURZEL / "agents" / "lauf.md").read_text()
+        self.assertIn("--warten 540", text)
+        self.assertIn("timeout: 600000", text)
+
+    def test_interne_skills_sind_nicht_aufrufbar(self):
+        skills = sorted(p.parent.name for p in (WURZEL / "skills").glob("*/SKILL.md"))
+        self.assertEqual(skills, ["omni-agent-auftrag", "omni-agent-ergebnis", "omni-agent-laufzeit"])
+        for name in skills:
+            self.assertEqual(_frontmatter(WURZEL / "skills" / name / "SKILL.md")["user-invocable"], "false", name)
+
+    def test_befehle_vollstaendig_und_nur_setup_darf_das_modell_rufen(self):
+        erwartet = {"run", "review", "adversarial-review", "status", "result", "cancel", "doctor", "konten", "setup"}
+        vorhanden = {p.stem for p in (WURZEL / "commands").glob("*.md")}
+        self.assertEqual(vorhanden, erwartet)
+        for name in erwartet:
+            f = _frontmatter(WURZEL / "commands" / f"{name}.md")
+            self.assertTrue(f.get("description"), name)
+            if name == "setup":
+                self.assertNotIn("disable-model-invocation", f)
+            else:
+                self.assertEqual(f["disable-model-invocation"], "true", name)
+
+    def test_run_befehl_ruft_agent_nicht_skill(self):
+        text = (WURZEL / "commands" / "run.md").read_text()
+        self.assertIn('subagent_type: "omni-agent:lauf"', text)
+        self.assertIn("Agent", _frontmatter(WURZEL / "commands" / "run.md")["allowed-tools"])
+        self.assertIn("AskUserQuestion", _frontmatter(WURZEL / "commands" / "run.md")["allowed-tools"])
+        self.assertIn("omni-agent fortsetzbar", text)
+
+    def test_adversarial_befehl_erzwingt_flag(self):
+        self.assertIn("--adversarial", (WURZEL / "commands" / "adversarial-review.md").read_text())
+        self.assertIn("omni-agent review --vorschau", (WURZEL / "commands" / "adversarial-review.md").read_text())
+
+    def test_hooks_rufen_bekannte_hook_namen(self):
+        daten = json.loads((WURZEL / "hooks" / "hooks.json").read_text())["hooks"]
+        self.assertEqual(set(daten), {"SessionStart", "SessionEnd", "Stop"})
+        befehle = {ereignis: daten[ereignis][0]["hooks"][0]["command"] for ereignis in daten}
+        self.assertTrue(befehle["SessionStart"].endswith("hook start"))
+        self.assertTrue(befehle["SessionEnd"].endswith("hook ende"))
+        self.assertTrue(befehle["Stop"].endswith("hook stopp"))
+        for b in befehle.values():
+            self.assertIn('"${CLAUDE_PLUGIN_ROOT}/bin/omni-agent"', b)
+
+    def test_dokumentierte_befehle_sind_echte_befehle(self):
+        """Jede in Befehlen, Agent und Skills genannte Zeile `omni-agent …` muss der echte Parser annehmen (kein erfundenes Flag)."""
+        import re
+        import shlex
+        from omni_agent.cli import baue_parser
+        parser = baue_parser()
+        dateien = list((WURZEL / "commands").glob("*.md")) + [WURZEL / "agents" / "lauf.md"] + list((WURZEL / "skills").glob("*/SKILL.md"))
+        geprueft = 0
+        for datei in dateien:
+            for zeile in _bash_zeilen(datei):
+                m = re.search(r"omni-agent ((?:run|review|status|result|cancel|warte|fortsetzbar|konto|doctor|setup|hook)\b[^\n|`]*)", zeile)
+                if not m:
+                    continue
+                teile = shlex.split(m.group(1).replace("$ARGUMENTS", "").replace("…", "x").replace("[", "").replace("]", ""))
+                teile = [t for t in teile if t not in ("|",) and not t.startswith("<")]
+                # Platzhalter in Beispielen wie NAME, ID, LAUF, M sind gültige Werte
+                try:
+                    parser.parse_args(teile)
+                except SystemExit:
+                    self.fail(f"{datei.name}: Parser lehnt ab: omni-agent {m.group(1)}")
+                geprueft += 1
+        self.assertGreater(geprueft, 8)
+
+    def test_skills_laufzeit_beispiele_parsen(self):
+        from omni_agent.cli import baue_parser
+        p = baue_parser()
+        a = p.parse_args(["run", "--warten", "540", "--konto", "fbs", "--projekt", "--schreibend", "--fortsetzen", "--text", "x"])
+        self.assertEqual((a.warten, a.konto, a.projekt, a.schreibend, a.fortsetzen), (540, "fbs", "", True, ""))
+        w = p.parse_args(["warte", "20260101-000000", "--max", "540"])
+        self.assertEqual((w.lauf, w.max), ("20260101-000000", 540))
+
+    def test_keine_alten_skills_mehr(self):
+        for alt in ("run", "review", "status", "doctor", "setup", "delegieren"):
+            self.assertFalse((WURZEL / "skills" / alt).exists(), alt)
+
+
+class LosgeloesteLaeufe(Farm):
+    def test_hintergrund_meldet_sofort_und_lauf_geht_weiter(self):
+        (self.bin / "modus").write_text("kurz")
+        t0 = time.time()
+        erg = subprocess.run([sys.executable, str(BIN), "run", "--hintergrund", "--text", "x", "--anbieter", "deepseek"],
+                             env=dict(self.env), capture_output=True, text=True, timeout=30)
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertLess(time.time() - t0, 5)
+        self.assertIn("Gestartet:", erg.stdout)
+        ordner = self.letzter_lauf()
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "arbeitet")
+        for _ in range(60):
+            time.sleep(0.5)
+            if json.loads((ordner / "status.json").read_text())["zustand"] != "arbeitet":
+                break
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "fertig")
+        self.assertTrue((ordner / "konsole.log").read_text().strip())  # Konsole des Laufs liegt im Ordner
+
+    def test_warten_liefert_bericht_mit_marke_fertig(self):
+        erg = self.lauf("run", "--warten", "30", "--text", "Sag hallo", "--anbieter", "deepseek")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        zeilen = erg.stdout.splitlines()
+        self.assertTrue(zeilen[0].startswith("Gestartet:"))
+        self.assertTrue(any(z.startswith("[fertig]") for z in zeilen))
+        self.assertIn("# Bericht", erg.stdout)
+        self.assertIn("Nachfrage an denselben Agenten", erg.stdout)
+
+    def test_warten_zu_kurz_meldet_laeuft_noch_und_warte_setzt_fort(self):
+        (self.bin / "modus").write_text("kurz")
+        erg = subprocess.run([sys.executable, str(BIN), "run", "--warten", "0", "--text", "x", "--anbieter", "deepseek"],
+                             env=dict(self.env), capture_output=True, text=True, timeout=30)
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("[läuft noch]", erg.stdout)
+        self.assertIn("omni-agent warte", erg.stdout)
+        zweite = subprocess.run([sys.executable, str(BIN), "warte", "--max", "30"], env=dict(self.env), capture_output=True, text=True, timeout=60)
+        self.assertEqual(zweite.returncode, 0, zweite.stderr)
+        self.assertIn("[fertig]", zweite.stdout)
+        self.assertIn("Spaet fertig", zweite.stdout)
+
+    def test_warten_meldet_fehler_mit_grund_und_exit_1(self):
+        erg = self.lauf("run", "--warten", "30", "--text", "x", "--anbieter", "deepseek", modus="ohne")
+        self.assertEqual(erg.returncode, 1)
+        self.assertIn("[fehler]", erg.stdout)
+        self.assertIn("Letzte Zeilen aus fehler.log", erg.stdout)
+        self.assertNotIn(FAKE_KEY, erg.stdout)
+
+    def test_frueher_fehler_wird_durchgereicht(self):
+        erg = self.lauf("run", "--hintergrund", "--text", "x", "--anbieter", "gibtsnicht")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("Unbekannter Anbieter", erg.stderr)
+
+    def test_abbrechen_eines_losgeloesten_laufs(self):
+        (self.bin / "modus").write_text("haengt")
+        erg = subprocess.run([sys.executable, str(BIN), "run", "--hintergrund", "--text", "x", "--anbieter", "deepseek", "--zeit", "60"],
+                             env=dict(self.env), capture_output=True, text=True, timeout=30)
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        abbruch = subprocess.run([sys.executable, str(BIN), "cancel"], env=dict(self.env), capture_output=True, text=True, timeout=60)
+        self.assertIn("abgebrochen", abbruch.stdout)
+        self.assertEqual(json.loads((self.letzter_lauf() / "status.json").read_text())["zustand"], "abgebrochen")
+
+    def test_ohne_flags_bleibt_run_blockierend_ohne_gestartet_zeile(self):
+        erg = self.lauf("run", "--text", "x", "--anbieter", "deepseek")
+        self.assertNotIn("Gestartet:", erg.stdout)
+
+
+class SitzungenUndHooks(Farm):
+    def test_lauf_merkt_sich_claude_sitzung_und_status_filtert(self):
+        self.env["OMNI_AGENT_SITZUNG"] = "sitzung-a"
+        self.lauf("run", "--text", "erster", "--anbieter", "deepseek")
+        self.env["OMNI_AGENT_SITZUNG"] = "sitzung-b"
+        self.lauf("run", "--text", "zweiter", "--anbieter", "deepseek")
+        status = json.loads(self.lauf("status", "--json").stdout)
+        self.assertEqual(len(status), 1)
+        self.assertEqual(status[0]["auftrag"], "zweiter")
+        alle = json.loads(self.lauf("status", "--json", "--alle").stdout)
+        self.assertEqual(len(alle), 2)
+
+    def test_status_ohne_sitzung_zeigt_alles_und_markdown_tabelle(self):
+        self.lauf("run", "--text", "Tabellenprobe", "--anbieter", "deepseek")
+        md = self.lauf("status", "--md").stdout
+        self.assertIn("| Lauf | Zustand |", md)
+        self.assertIn("Tabellenprobe", md)
+
+    def test_result_und_cancel_nehmen_standardmaessig_die_eigene_sitzung(self):
+        self.env["OMNI_AGENT_SITZUNG"] = "a"
+        self.lauf("run", "--text", "Auftrag A", "--anbieter", "deepseek")
+        self.env["OMNI_AGENT_SITZUNG"] = "b"
+        self.lauf("run", "--text", "Auftrag B", "--anbieter", "deepseek")
+        self.env["OMNI_AGENT_SITZUNG"] = "a"
+        self.assertIn("Auftrag A", self.lauf("result").stdout)  # neuester Lauf von a, nicht der neueste überhaupt
+        self.env["OMNI_AGENT_SITZUNG"] = "ganz-neu"
+        self.assertIn("Auftrag B", self.lauf("result").stdout)  # Sitzung ohne Läufe: Rückfall auf den neuesten
+
+    def test_fortsetzbar(self):
+        self.env["OMNI_AGENT_SITZUNG"] = "a"
+        self.assertEqual(json.loads(self.lauf("fortsetzbar").stdout), {"available": False})
+        self.lauf("run", "--text", "Erster", "--anbieter", "deepseek")
+        erg = json.loads(self.lauf("fortsetzbar").stdout)
+        self.assertTrue(erg["available"])
+        self.assertEqual(erg["anbieter"], "deepseek")
+        self.env["OMNI_AGENT_SITZUNG"] = "andere"
+        self.assertEqual(json.loads(self.lauf("fortsetzbar").stdout), {"available": False})
+
+    def _hook(self, name, eingabe, env_extra=None):
+        env = dict(self.env, **(env_extra or {}))
+        return subprocess.run([sys.executable, str(BIN), "hook", name], env=env, input=json.dumps(eingabe),
+                              capture_output=True, text=True, timeout=60)
+
+    def test_hook_start_schreibt_sitzung_in_env_datei(self):
+        datei = Path(self.tmp.name) / "claude-env"
+        erg = self._hook("start", {"session_id": "abc-123"}, {"CLAUDE_ENV_FILE": str(datei)})
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertEqual(datei.read_text(), "export OMNI_AGENT_SITZUNG='abc-123'\n")
+
+    def test_hook_ohne_env_datei_oder_im_lauf_tut_nichts(self):
+        self.assertEqual(self._hook("start", {"session_id": "x"}).returncode, 0)
+        datei = Path(self.tmp.name) / "claude-env"
+        erg = self._hook("start", {"session_id": "x"}, {"CLAUDE_ENV_FILE": str(datei), "OMNI_AGENT_LAUF": "1"})
+        self.assertEqual(erg.returncode, 0)
+        self.assertFalse(datei.exists())
+
+    def test_hook_ende_beendet_nur_laufende_dieser_sitzung(self):
+        (self.bin / "modus").write_text("haengt")
+        env = dict(self.env, OMNI_AGENT_SITZUNG="s1")
+        erg = subprocess.run([sys.executable, str(BIN), "run", "--hintergrund", "--text", "x", "--anbieter", "deepseek", "--zeit", "60"],
+                             env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        ordner = self.letzter_lauf()
+        self._hook("ende", {"session_id": "fremde-sitzung"})
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "arbeitet")
+        self._hook("ende", {"session_id": "s1", "reason": "clear"})
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "arbeitet")
+        self._hook("ende", {"session_id": "s1", "reason": "other"})
+        for _ in range(40):
+            time.sleep(0.5)
+            if json.loads((ordner / "status.json").read_text())["zustand"] != "arbeitet":
+                break
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["zustand"], "abgebrochen")
+
+
+class Projektmodus(Farm):
+    def setUp(self):
+        super().setUp()
+        self.env["OMNI_AGENT_KONTO_TK"] = FAKE_KEY
+        self.assertEqual(self.lauf("konto", "add", "tk", "--art", "api").returncode, 0)
+        self.projekt = Path(self.tmp.name) / "projekt"
+        self.projekt.mkdir()
+        (self.projekt / "code.py").write_text("x = 1\n")
+
+    def _lauf_in(self, cwd, *args, modus="antwort"):
+        (self.bin / "modus").write_text(modus)
+        return subprocess.run([sys.executable, str(BIN), *args], env=dict(self.env), cwd=cwd, capture_output=True, text=True, timeout=60)
+
+    def test_agent_arbeitet_im_projekt_nur_lesend_und_bericht_kommt_aus_schlussantwort(self):
+        erg = self._lauf_in(self.projekt, "run", "--konto", "tk", "--projekt", "--text", "Lies code.py")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertEqual((self.bin / "cwd.log").read_text().strip(), str(self.projekt.resolve()))
+        argv = json.loads((self.bin / "argv.log").read_text().splitlines()[-1])
+        werkzeuge = argv[argv.index("--allowed-tools") + 1:]
+        self.assertIn("Read", werkzeuge)
+        self.assertNotIn("Write", werkzeuge)
+        self.assertNotIn("Edit", werkzeuge)
+        self.assertNotIn("Bash", werkzeuge)
+        ordner = self.letzter_lauf()
+        self.assertIn("Schlussantwort des Agenten", (ordner / "bericht.md").read_text())
+        self.assertFalse((self.projekt / "bericht.md").exists())  # nichts im Projekt hinterlassen
+        self.assertIn("nur lesen", erg.stdout)
+        status = json.loads((ordner / "status.json").read_text())
+        self.assertEqual((status["zustand"], status["projekt"], status["schreibend"]), ("fertig", str(self.projekt.resolve()), False))
+        self.assertIn("Projektordner", (self.bin / "argv.log").read_text())  # Projekt-Rahmen im Prompt
+
+    def test_schreibend_gibt_write_und_edit_frei(self):
+        erg = self._lauf_in(self.projekt, "run", "--konto", "tk", "--projekt", "--schreibend", "--text", "Ändere code.py")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        argv = json.loads((self.bin / "argv.log").read_text().splitlines()[-1])
+        werkzeuge = argv[argv.index("--allowed-tools") + 1:]
+        self.assertIn("Write", werkzeuge)
+        self.assertIn("Edit", werkzeuge)
+        self.assertNotIn("Bash", werkzeuge)
+
+    def test_projekt_mit_fremdanbieter_wird_verweigert(self):
+        erg = self._lauf_in(self.projekt, "run", "--anbieter", "deepseek", "--projekt", "--text", "x")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("nur mit Claude-Konten und Codex", erg.stderr)
+        self.assertFalse((self.home / "laeufe").exists())
+
+    def test_schreibend_ohne_projekt_und_projekt_mit_material_scheitern(self):
+        self.assertEqual(self._lauf_in(self.projekt, "run", "--konto", "tk", "--schreibend", "--text", "x").returncode, 2)
+        material = Path(self.tmp.name) / "mat"
+        material.mkdir()
+        self.assertEqual(self._lauf_in(self.projekt, "run", "--konto", "tk", "--projekt", "--material", str(material), "--text", "x").returncode, 2)
+
+    def test_explizit_verlangtes_schreiben_ohne_schreibend_scheitert(self):
+        erg = self._lauf_in(self.projekt, "run", "--konto", "tk", "--projekt", "--werkzeuge", "lesen,schreiben", "--text", "x")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("--schreibend", erg.stderr)
+
+    def test_nachfrage_bleibt_im_projekt(self):
+        self._lauf_in(self.projekt, "run", "--konto", "tk", "--projekt", "--text", "Erste Frage")
+        erg = self._lauf_in(Path(self.tmp.name), "run", "--fortsetzen", "--text", "Zweite Frage")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        cwds = (self.bin / "cwd.log").read_text().split()
+        self.assertEqual(cwds[0], cwds[1])  # Nachfrage läuft im selben Projekt, nicht im aktuellen Verzeichnis
+
+    def test_codex_sandbox_im_projekt_read_only(self):
+        from omni_agent.runner.codex import CodexRunner
+        from omni_agent.anbieter import hole_anbieter
+        projekt, ordner = Path("/tmp/projekt"), Path("/tmp/lauf")
+        ctx = LaufKontext(prompt="p", ordner=ordner, anbieter=hole_anbieter("codex"), modell="gpt-6.1-sol", base_url=None,
+                          protokoll="openai-responses", schluessel={}, werkzeuge=("lesen",), max_runden=5, projekt=projekt)
+        argv = CodexRunner().baue(ctx).argv
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
+        self.assertEqual(argv[argv.index("--cd") + 1], str(projekt))
+        ctx.schreibend = True
+        argv = CodexRunner().baue(ctx).argv
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
+
+
+class ReviewGate(Farm):
+    def setUp(self):
+        super().setUp()
+        self.env["OMNI_AGENT_KONTO_TK"] = FAKE_KEY
+        self.assertEqual(self.lauf("konto", "add", "tk", "--art", "api").returncode, 0)
+        self.assertEqual(self.lauf("konto", "standard", "tk").returncode, 0)
+        self.repo, self.git = self._repo()
+
+    def _stopp(self, modus="allow", **eingabe):
+        (self.bin / "modus").write_text(modus)
+        daten = {"session_id": "s1", "cwd": str(self.repo), "last_assistant_message": "Habe m.py geändert", **eingabe}
+        return subprocess.run([sys.executable, str(BIN), "hook", "stopp"], env=dict(self.env), input=json.dumps(daten),
+                              capture_output=True, text=True, timeout=60)
+
+    def _gate(self, an=True):
+        self.assertEqual(self.lauf("setup", "--review-gate", "an" if an else "aus").returncode in (0, 2), True)
+
+    def test_aus_ist_standard_und_laesst_still_durch(self):
+        (self.repo / "m.py").write_text("a = 2\n")
+        erg = self._stopp()
+        self.assertEqual((erg.returncode, erg.stdout.strip()), (0, ""))
+        self.assertFalse((self.home / "laeufe").exists())
+
+    def test_an_ohne_aenderungen_ruft_kein_modell(self):
+        self._gate()
+        erg = self._stopp()
+        self.assertEqual((erg.returncode, erg.stdout.strip()), (0, ""))
+        self.assertFalse((self.home / "laeufe").exists())
+
+    def test_block_dann_gleicher_stand_wird_nicht_erneut_blockiert(self):
+        self._gate()
+        (self.repo / "m.py").write_text("a = 2\n")
+        erste = self._stopp("block")
+        self.assertEqual(erste.returncode, 0, erste.stderr)
+        entscheidung = json.loads(erste.stdout)
+        self.assertEqual(entscheidung["decision"], "block")
+        self.assertIn("Datei m.py Zeile 1 ist kaputt", entscheidung["reason"])
+        zweite = self._stopp("block")  # gleicher Diff: kein zweites Mal blockieren, kein zweiter Lauf
+        self.assertEqual(zweite.stdout.strip(), "")
+        self.assertEqual(len(list((self.home / "laeufe").iterdir())), 1)
+        (self.repo / "m.py").write_text("a = 3\n")  # geänderter Diff: wieder prüfen
+        dritte = self._stopp("block")
+        self.assertEqual(json.loads(dritte.stdout)["decision"], "block")
+
+    def test_allow_laesst_durch_und_gibt_diff_und_antwort_als_material(self):
+        self._gate()
+        (self.repo / "m.py").write_text("a = 2\n")
+        erg = self._stopp("allow")
+        self.assertEqual((erg.returncode, erg.stdout.strip()), (0, ""))
+        ordner = sorted((self.home / "laeufe").iterdir())[-1]
+        self.assertTrue(ordner.name.endswith("-gate"))
+        self.assertIn("+a = 2", (ordner / "aenderungen.patch").read_text())
+        self.assertIn("Habe m.py geändert", (ordner / "letzte_antwort.md").read_text())
+        self.assertEqual(json.loads((ordner / "status.json").read_text())["art"], "gate")
+
+    def test_geheimnis_im_diff_ueberspringt_das_gate(self):
+        self._gate()
+        (self.repo / "k.py").write_text('API_KEY = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"\n')
+        self.git("add", "-N", "k.py")
+        erg = self._stopp("block")
+        self.assertEqual(erg.stdout.strip(), "")
+        self.assertIn("übersprungen", erg.stderr)
+        self.assertFalse((self.home / "laeufe").exists())
+
+    def test_gate_im_lauf_tut_nichts(self):
+        self._gate()
+        (self.repo / "m.py").write_text("a = 2\n")
+        self.env["OMNI_AGENT_LAUF"] = "1"
+        self.assertEqual(self._stopp("block").stdout.strip(), "")
+
+    def test_anschalten_braucht_standardkonto(self):
+        self.assertEqual(self.lauf("konto", "standard", "--loeschen").returncode, 0)
+        self.assertEqual(self.lauf("setup", "--review-gate", "an").returncode, 2)
+
+    def test_stopp_weist_auf_laufende_laeufe_hin(self):
+        (self.bin / "modus").write_text("haengt")
+        env = dict(self.env, OMNI_AGENT_SITZUNG="s1")
+        subprocess.run([sys.executable, str(BIN), "run", "--hintergrund", "--text", "x", "--konto", "tk", "--zeit", "60"],
+                       env=env, capture_output=True, text=True, timeout=30)
+        try:
+            erg = self._stopp()
+            self.assertIn("arbeiten noch", erg.stderr)
+        finally:
+            subprocess.run([sys.executable, str(BIN), "cancel"], env=env, capture_output=True, text=True, timeout=60)
+
+
+class ReviewVertrag(Farm):
+    def test_auftrag_hat_festes_berichtsgeruest(self):
+        repo, _ = self._repo()
+        (repo / "m.py").write_text("a = 2\n")
+        self.assertEqual(self._review(repo, "--anbieter", "deepseek").returncode, 0)
+        auftrag = (self.letzter_lauf() / "auftrag.md").read_text()
+        for marke in ("## Urteil", "freigeben", "nacharbeiten", "## Befunde", "### [kritisch|hoch|mittel|niedrig]", "Sicherheit:", "## Nächste Schritte"):
+            self.assertIn(marke, auftrag)
+        self.assertNotIn("gegnerisch", auftrag.split("<befundlatte>")[0])  # ohne --adversarial keine Haltung
+
+    def test_gegnerisch_ergaenzt_haltung_und_angriffsflaeche(self):
+        repo, _ = self._repo()
+        (repo / "m.py").write_text("a = 2\n")
+        self._review(repo, "--anbieter", "deepseek", "--adversarial")
+        auftrag = (self.letzter_lauf() / "auftrag.md").read_text()
+        self.assertIn("<haltung>", auftrag)
+        self.assertIn("<angriffsflaeche>", auftrag)
+
+    def test_sauberer_baum_prueft_den_branch_gegen_den_hauptzweig(self):
+        repo, git = self._repo()
+        git("branch", "-M", "main")
+        git("checkout", "-qb", "feature")
+        (repo / "m.py").write_text("a = 99\n")
+        git("commit", "-qam", "feature")
+        erg = self._review(repo, "--anbieter", "deepseek")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("Branch gegen main", erg.stdout)
+        self.assertIn("+a = 99", (self.letzter_lauf() / "aenderungen.patch").read_text())
+
+    def test_review_hintergrund_vorschau_startet_nichts(self):
+        repo, _ = self._repo()
+        (repo / "m.py").write_text("a = 2\n")
+        erg = self._review(repo, "--anbieter", "deepseek", "--hintergrund", "--vorschau")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("nichts gesendet", erg.stdout)
+        self.assertFalse((self.home / "laeufe").exists())
 
 
 if __name__ == "__main__":

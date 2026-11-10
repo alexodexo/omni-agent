@@ -5,11 +5,10 @@ Hintergrund-Agents mit **austauschbarem Modell-Anbieter** und **austauschbarer A
 Du gibst einen Auftrag, Omni-Agent startet damit einen zweiten Agenten (zum Beispiel mit DeepSeek, Kimi oder einem lokalen Ollama-Modell), wartet, bis dieser `bericht.md` geschrieben hat, und gibt dir den Bericht zurück. Dein Haupt-Claude arbeitet währenddessen weiter.
 
 ```
-Claude Code (du)  ──/omni-agent:run──►  omni-agent run
-                                         ├─ Anbieter  (wessen Modell, wo, welcher Schlüssel)
-                                         └─ Runner    (welche Agent-CLI führt aus)
-                                              ▼
-                              ~/.omni-agent/laeufe/<zeit>-<anbieter>/bericht.md
+Claude Code (du) ──/omni-agent:run──► Subagent omni-agent:lauf ──► omni-agent run (losgelöst)
+        ▲  oder Claude delegiert selbst            (dünner Weiterleiter)     ├─ Anbieter  (wessen Modell, wo, welcher Schlüssel)
+        │                                                                    └─ Runner    (welche Agent-CLI führt aus)
+        └──── Benachrichtigung, wenn der Lauf endet ◄──────── ~/.omni-agent/laeufe/<zeit>-<anbieter>/bericht.md
 ```
 
 | Schicht | Auswahl | Standard |
@@ -35,13 +34,34 @@ Claude Code (du)  ──/omni-agent:run──►  omni-agent run
 
 | Befehl im Claude-Chat | Zweck |
 |---|---|
-| `/omni-agent:setup [anbieter]` | Einrichtung, Anleitung für einen Anbieter |
+| `/omni-agent:run [--hintergrund\|--vordergrund] [--konto NAME \| --anbieter ID] [--projekt] [--schreibend] [--fortsetzen\|--neu] <auftrag>` | Auftrag an einen Lauf mit anderem Modell, anderem Claude-Konto oder Codex. Standard: im Hintergrund, du wirst benachrichtigt |
+| `/omni-agent:review [--base main] [--konto NAME] [Schwerpunkt]` | Git-Änderungen von einem anderen Modell prüfen lassen (Urteil, Befunde nach Schwere) |
+| `/omni-agent:adversarial-review [Schwerpunkt]` | Dasselbe, aber gegnerisch: stellt die gewählte Lösung infrage |
+| `/omni-agent:status [lauf] [--alle]` | Tabelle der Läufe dieser Sitzung |
+| `/omni-agent:result [lauf]` | Bericht eines Laufs, unverändert |
+| `/omni-agent:cancel [lauf]` | Laufenden Lauf abbrechen |
+| `/omni-agent:konten` | Claude-Konten mit Auslastung (5 Stunden, 7 Tage) und Standard |
+| `/omni-agent:setup [--anbieter ID] [--review-gate an\|aus]` | Einrichtung, Anleitung für einen Anbieter, Review-Gate |
 | `/omni-agent:doctor` | Was ist da, was fehlt |
-| `/omni-agent:run deepseek <auftrag>` | Auftrag im Hintergrund ausführen |
-| `/omni-agent:review [konto] [--base main]` | Git-Änderungen von einem anderen Modell prüfen lassen |
-| `/omni-agent:status` | Läufe und Berichte ansehen |
 
-Dazu kennt Claude die Skill `delegieren`: Sie schlägt von selbst einen Hintergrundlauf vor, wenn eine Teilaufgabe sich dafür eignet. Gestartet wird nie ohne dein Ja.
+### Wie Claude mit Omni-Agent arbeitet
+
+Diese Dateien im Plugin legen fest, **wie** Claude mit Omni-Agent umgeht (es gibt keine zentrale „Anleitungsdatei"; in einem Plugin wird `CLAUDE.md` nicht geladen):
+
+| Datei | Rolle |
+|---|---|
+| `agents/lauf.md` | Der Subagent `omni-agent:lauf`: ein dünner Weiterleiter. **Seine Beschreibung ist der Auslöser**: Claude darf ihn von selbst rufen, wenn eine größere, abgegrenzte Teilaufgabe an ein anderes Modell, Konto oder Codex gehen soll. Du musst „Omni-Agent" nicht sagen, auch in einem `/goal` nicht. Einen Fremdanbieter wählt Claude nie von sich aus |
+| `commands/*.md` | Die Slash-Befehle. `run` ruft den Subagenten, `status`, `result`, `cancel`, `doctor`, `konten` führen den Befehl direkt aus (kein Modell dazwischen) |
+| `skills/omni-agent-laufzeit` | Interner Vertrag des Subagenten: genaue Befehlssyntax, Warteschleife, Projektmodus |
+| `skills/omni-agent-auftrag` | Interne Anleitung, wie ein Auftrag geschrieben wird (Ziel, Kontext, Erledigt-Kriterium, Grenzen) |
+| `skills/omni-agent-ergebnis` | Interne Regeln, wie Ergebnisse weitergegeben werden (Befunde zuerst, Vermutungen kenntlich, nach einem Review anhalten, bei Fehlern keinen Ersatz erfinden) |
+| `hooks/hooks.json` | Ordnet Läufe einer Claude-Sitzung zu, räumt beim Beenden auf, optionales Review-Gate |
+
+**Läufe gehören zur Sitzung.** `status`, `result`, `cancel` und die Rückfrage „fortsetzen oder neu?" beziehen sich zuerst auf Läufe der aktuellen Claude-Sitzung. Endet die Sitzung, werden ihre noch laufenden Läufe beendet (bei `/clear` nicht); Berichte bleiben liegen.
+
+**Projektmodus.** `--projekt` lässt den Agenten im Projektordner arbeiten (nur lesend; `--schreibend` erlaubt Änderungen, ohne Commit und Push). Das geht nur mit Claude-Konten und Codex, nie mit einem Fremdanbieter. Der Bericht ist die Schlussantwort des Agenten; im Projekt bleibt keine Berichtsdatei zurück.
+
+**Review-Gate (aus, solange du es nicht einschaltest).** `/omni-agent:setup --review-gate an`: Vor dem Beenden einer Claude-Sitzung prüft das Standardkonto jeden neuen Stand ungeprüfter Änderungen und kann das Beenden einmal aufhalten. Ohne Änderungen wird kein Modell gerufen; derselbe Diff wird nie zweimal geprüft, höchstens drei Blockaden je Sitzung, bei Geheimnissen im Diff oder Störungen wird durchgelassen. Das kostet Nutzung, und der Diff verlässt den Rechner.
 
 Im Terminal:
 
@@ -53,9 +73,12 @@ omni-agent result                         # Bericht des letzten Laufs
 omni-agent run --fortsetzen --text "Und wie sieht es bei X aus?"   # Nachfrage an denselben Agenten
 omni-agent cancel                         # laufenden Lauf abbrechen
 omni-agent review --konto fbs --base main --adversarial   # Zweitmeinung zu den Änderungen im Repo
+omni-agent run --hintergrund --konto felipe --text "…"   # losgelöst starten, Laufname kommt sofort
+omni-agent warte --max 540                               # auf den Lauf warten, dann Stand oder Bericht
+omni-agent run --projekt --konto fbs --text "Warum hängt der Login?"   # im aktuellen Projekt, nur lesend
 ```
 
-**Review:** `omni-agent review` schickt den Git-Diff (alle Änderungen gegen HEAD oder `--base main`) an ein anderes Modell oder Konto und liefert Befunde nach Schwere mit Datei und Zeile. `--adversarial` stellt zusätzlich die gewählte Lösung infrage, ein freier Text danach legt den Schwerpunkt fest. Der Diff verlässt den Rechner: `--vorschau` zeigt vorher, was gesendet würde. Enthält der Diff mögliche Geheimnisse oder `.env`-Dateien, wird **nichts** gesendet (nur `--trotzdem` überstimmt das). Lock-Dateien und Dateien über 400 KB Diff werden ausgenommen. Der Reviewer ändert nichts am Code; Befunde sind Hinweise, keine Wahrheit.
+**Review:** `omni-agent review` schickt den Git-Diff (alle Änderungen gegen HEAD, bei sauberem Arbeitsbaum der Branch gegen den Hauptzweig, oder `--base main`) an ein anderes Modell oder Konto und liefert Urteil (`freigeben` oder `nacharbeiten`), Befunde nach Schwere mit Datei, Zeile und Sicherheit sowie nächste Schritte. `--adversarial` stellt zusätzlich die gewählte Lösung infrage, ein freier Text danach legt den Schwerpunkt fest. Der Diff verlässt den Rechner: `--vorschau` zeigt vorher, was gesendet würde. Enthält der Diff mögliche Geheimnisse oder `.env`-Dateien, wird **nichts** gesendet (nur `--trotzdem` überstimmt das). Lock-Dateien und Dateien über 400 KB Diff werden ausgenommen. Der Reviewer ändert nichts am Code; Befunde sind Hinweise, keine Wahrheit.
 
 **Nachfragen:** `--fortsetzen` setzt den Lauf mit demselben Agentenverlauf fort (Claude und Codex), im selben Ordner; `bericht.md` wird aktualisiert. Anbieter und Runner bleiben die des Laufs.
 

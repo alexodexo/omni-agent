@@ -120,3 +120,23 @@ def setze_standard_anbieter(anbieter_id: str | None) -> None:
         daten.pop("standard_anbieter", None)
     home().mkdir(parents=True, exist_ok=True)
     config_datei().write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def setze_config(schluessel: str, wert) -> None:
+    """Einen Schlüssel der config.json setzen (None löscht ihn)."""
+    daten = lese_config()
+    if wert is None:
+        daten.pop(schluessel, None)
+    else:
+        daten[schluessel] = wert
+    home().mkdir(parents=True, exist_ok=True)
+    config_datei().write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def claude_sitzung() -> str | None:
+    """ID der Claude-Code-Sitzung, in der dieser Befehl läuft (setzt der SessionStart-Hook). Ordnet Läufe einer Sitzung zu."""
+    return os.environ.get("OMNI_AGENT_SITZUNG") or None
+
+
+def review_gate_an() -> bool:
+    return lese_config().get("review_gate") is True

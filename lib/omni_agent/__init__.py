@@ -1,3 +1,3 @@
 """Omni-Agent: Hintergrund-Agents mit austauschbarem Anbieter und austauschbarer Agent-CLI."""
 
-VERSION = "0.4.0"
+VERSION = "1.1.1"

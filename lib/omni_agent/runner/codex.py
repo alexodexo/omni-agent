@@ -49,8 +49,10 @@ class CodexRunner(Runner):
         sitzung = ctx.extra.get("fortsetzen")
         aufwand = ctx.extra.get("aufwand")
         optionen = ["--json", "--skip-git-repo-check"]
+        # Im Projekt nur lesen, außer die Nutzerin erlaubt Schreiben; im Laufordner darf der Agent bericht.md schreiben.
+        sandbox = "read-only" if (ctx.projekt and not ctx.schreibend) else "workspace-write"
         # `resume` kennt weder --sandbox noch --cd: gleiche Wirkung über -c, Ordner ist das aktuelle Verzeichnis
-        optionen += ["-c", 'sandbox_mode="workspace-write"'] if sitzung else ["--sandbox", "workspace-write"]
+        optionen += ["-c", f'sandbox_mode="{sandbox}"'] if sitzung else ["--sandbox", sandbox]
 
         if a.konto_art == "login":
             # Anmeldung der CLI selbst; eigene Einstellungen und Regeln des Nutzers bleiben draußen.
@@ -75,7 +77,7 @@ class CodexRunner(Runner):
         if sitzung:
             argv = [exe, "exec", "resume", *optionen, *modell_optionen, sitzung, ctx.prompt]
         else:
-            argv = [exe, "exec", *optionen, "--cd", str(ctx.ordner), *modell_optionen, ctx.prompt]
+            argv = [exe, "exec", *optionen, "--cd", str(ctx.arbeitsordner), *modell_optionen, ctx.prompt]
         return Befehl(argv=argv, env=env)
 
     def fortschritt(self, zeile: str, zustand: dict) -> list:
@@ -92,5 +94,6 @@ class CodexRunner(Runner):
             zustand["runden"] = zustand.get("runden", 0) + 1
             return [f"Werkzeug {zustand['runden']}: {art}"]
         if art == "agent_message" and item.get("text"):
+            zustand["ergebnis"] = item["text"]  # letzte Antwort: im Projektmodus wird daraus der Bericht
             return [f"Agent: {kurz(item['text'])}"]
         return []

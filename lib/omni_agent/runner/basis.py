@@ -30,6 +30,12 @@ class LaufKontext:
     werkzeuge: tuple
     max_runden: int
     extra: dict = field(default_factory=dict)
+    projekt: Path | None = None      # Arbeitsordner = Projekt der Nutzerin (statt leerem Laufordner); Bericht kommt aus der Schlussantwort
+    schreibend: bool = False         # im Projekt dürfen Dateien geändert werden (sonst nur lesen)
+
+    @property
+    def arbeitsordner(self) -> Path:
+        return self.projekt or self.ordner
 
 
 @dataclass
@@ -45,6 +51,7 @@ def grundumgebung() -> dict:
         "HOME": str(Path.home()),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "TERM": "dumb",
+        "OMNI_AGENT_LAUF": "1",  # Hooks dieses Plugins erkennen daran, dass sie in einem Lauf stecken, und tun nichts
     }
     for name in DURCHREICHEN:
         if os.environ.get(name):

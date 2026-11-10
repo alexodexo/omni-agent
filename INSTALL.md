@@ -64,7 +64,7 @@ Erfolg: Exit 0 und `Bericht: …/bericht.md`. Lies den Bericht und zeige ihn kur
 
 ## 7. Fertig
 
-Sage der Nutzerin, wie es weitergeht: `/omni-agent:run <anbieter> <auftrag>`, `/omni-agent:status`, `/omni-agent:doctor`. Erwähne, dass Ergebnisse von Fremdmodellen Entwürfe sind.
+Sage der Nutzerin, wie es weitergeht: `/omni-agent:run <auftrag>` (mit `--konto NAME` oder `--anbieter ID`), `/omni-agent:review`, `/omni-agent:status`, `/omni-agent:doctor`. Claude kann auch von selbst über den Subagenten `omni-agent:lauf` delegieren. Erwähne, dass Ergebnisse von Fremdmodellen Entwürfe sind.
 
 ## Was du nicht tust
 

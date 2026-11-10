@@ -17,18 +17,58 @@ GEHEIMNIS_MUSTER = re.compile(
 
 AUFTRAG = """Prüfe die Codeänderungen in der Datei aenderungen.patch (Git-Diff). Die Liste der geänderten Dateien steht in geaenderte_dateien.txt.
 
-Was du liefern sollst, in bericht.md:
-- Befunde nach Schwere geordnet (hoch, mittel, niedrig). Je Befund: Datei und Zeile, was genau falsch ist oder falsch werden kann, und woran im Diff du es siehst.
-- Nur Dinge, die Fehler, Datenverlust, Sicherheitslücken oder Fehlverhalten verursachen können. Keine Stilfragen.
-- Gibt es nichts, schreibe ausdrücklich "Keine Befunde" und das Restrisiko in einem Satz.
+<ziel>
+{ziel}
+</ziel>
 
-Regeln:
-- Du siehst nur den Diff, nicht den übrigen Code. Was vom unsichtbaren Kontext abhängt, kennzeichnest du als Vermutung.
-- Ändere nichts am Code und schreibe keine fertigen Patches. Beschreibe Korrekturen in Worten.
+<befundlatte>
+Melde nur wesentliche Befunde: Fehler, Datenverlust, Sicherheitslücken, falsche Rechte, Fehlverhalten unter Last oder bei Teilfehlern. Keine Stilfragen, keine Namensfragen, keine Aufräumwünsche, keine Vermutungen ohne Anhaltspunkt im Diff.
+Jeder Befund beantwortet: Was kann schiefgehen? Warum ist diese Stelle anfällig? Welche Wirkung ist wahrscheinlich? Welche konkrete Änderung senkt das Risiko?
+</befundlatte>
+
+<grenzen_der_sicht>
+Du siehst nur den Diff, nicht den übrigen Code. Was vom unsichtbaren Kontext abhängt, kennzeichnest du ausdrücklich als Vermutung und hältst die Sicherheit entsprechend niedrig. Erfinde keine Dateien, Zeilen, Abläufe oder Vorfälle. Ändere nichts am Code und schreibe keine fertigen Patches; beschreibe Korrekturen in Worten.
+</grenzen_der_sicht>
+
+<aufbau_bericht>
+Schreibe bericht.md genau in dieser Gliederung:
+
+## Urteil
+`freigeben` oder `nacharbeiten`, dazu ein Satz wie ein knappes Ship/No-Ship-Urteil, keine neutrale Nacherzählung.
+
+## Befunde
+Nach Schwere geordnet. Je Befund eine Überschrift der Form `### [kritisch|hoch|mittel|niedrig] Titel`, darunter:
+- Stelle: `datei:zeile_von-zeile_bis`
+- Sicherheit: Zahl von 0 bis 1 (ehrlich, bei Vermutung niedrig)
+- Problem und Wirkung: ein bis drei Sätze
+- Empfehlung: konkret
+
+Gibt es nichts Belastbares: `Keine Befunde.` und das Restrisiko in einem Satz. Lieber ein starker Befund als mehrere schwache.
+
+## Nächste Schritte
+Höchstens drei Punkte, oder `keine`.
+</aufbau_bericht>
 """
 
 ADVERSARIAL = """
-Prüfe zusätzlich gegnerisch: Stelle die gewählte Lösung infrage. Welche Annahmen stecken drin, wie scheitert sie unter Last, bei Teilfehlern, Wettlaufsituationen, Rückgängigmachen oder falschen Rechten? Wäre ein einfacherer Ansatz sicherer? Nenne die stärksten zwei bis drei Einwände.
+<haltung>
+Prüfe gegnerisch. Deine Aufgabe ist, das Vertrauen in die Änderung zu erschüttern, nicht sie zu bestätigen. Geh von Skepsis aus: Nimm an, die Änderung kann auf subtile, teure oder sichtbare Weise scheitern, bis der Diff etwas anderes belegt. Gib keinen Kredit für gute Absicht, Teillösungen oder spätere Nacharbeit. Funktioniert etwas nur im Gutfall, ist das eine echte Schwäche.
+</haltung>
+
+<angriffsflaeche>
+Gewichte, was teuer, gefährlich oder schwer zu bemerken ist:
+- Rechte, Mandantentrennung, Vertrauensgrenzen
+- Datenverlust, Verfälschung, Doppelungen, nicht umkehrbare Zustände
+- Rückgängigmachen, Wiederholungen, Teilausfälle, Idempotenz
+- Wettlaufsituationen, Reihenfolgeannahmen, veralteter Zustand
+- Leerzustand, Null, Zeitüberschreitung, ausgefallene Abhängigkeiten
+- Versionsunterschiede, Schema- und Migrationsrisiken, Kompatibilitätsbrüche
+- Lücken in der Beobachtbarkeit, die Fehler verstecken
+</angriffsflaeche>
+
+<vorgehen>
+Versuche aktiv, die Änderung zu widerlegen: verletzte Invarianten, fehlende Wächter, unbehandelte Fehlerpfade, Annahmen, die unter Last nicht mehr gelten. Verfolge, wie schlechte Eingaben, Wiederholungen, gleichzeitige Aktionen oder halb fertige Abläufe durch den Code wandern. Nenne die stärksten zwei bis drei Einwände. Wirkt die Änderung sicher, sage das offen.
+</vorgehen>
 """
 
 
@@ -42,9 +82,26 @@ def _git(args: list, cwd: str | None = None) -> str:
     return erg.stdout
 
 
-def sammle(base: str | None) -> dict:
-    """Diff und Dateiliste. Ohne base: alle Änderungen gegen HEAD (gestaged und ungestaged)."""
+def hauptzweig(wurzel: str) -> str | None:
+    """main oder master (origin bevorzugt), falls es ihn gibt und wir nicht selbst darauf stehen."""
+    aktuell = _git(["rev-parse", "--abbrev-ref", "HEAD"], wurzel).strip()
+    for kandidat in ("origin/main", "origin/master", "main", "master"):
+        if kandidat.split("/")[-1] == aktuell:
+            continue
+        try:
+            _git(["rev-parse", "--verify", "--quiet", kandidat], wurzel)
+            return kandidat
+        except KonfigFehler:
+            continue
+    return None
+
+
+def sammle(base: str | None, nur_arbeitsbaum: bool = False) -> dict:
+    """Diff und Dateiliste. Ohne base: alle Änderungen gegen HEAD (gestaged und ungestaged);
+    ist der Arbeitsbaum sauber, der Branch gegen den Hauptzweig."""
     wurzel = _git(["rev-parse", "--show-toplevel"]).strip()
+    if not base and not nur_arbeitsbaum and not _git(["status", "--porcelain", "--untracked-files=no"], wurzel).strip():
+        base = hauptzweig(wurzel)
     if base:
         diff = _git(["diff", "--no-color", "-U8", f"{base}...HEAD", "--", ".", *AUSGENOMMEN], wurzel)
         namen = _git(["diff", "--name-status", f"{base}...HEAD", "--", ".", *AUSGENOMMEN], wurzel)
@@ -94,7 +151,7 @@ def fuehre_review_aus(args) -> int:
         print("Vorschau: nichts gesendet. Dateien:\n" + daten["namen"])
         return 0
 
-    auftrag = AUFTRAG + (ADVERSARIAL if args.adversarial else "")
+    auftrag = AUFTRAG.format(ziel=f"Prüfziel: {daten['ziel']}.") + (ADVERSARIAL if args.adversarial else "")
     if args.fokus:
         auftrag += f"\nSchwerpunkt der Nutzerin: {' '.join(args.fokus)}\n"
     with tempfile.TemporaryDirectory() as material:
@@ -104,5 +161,6 @@ def fuehre_review_aus(args) -> int:
             auftrag=None, text=auftrag, anbieter=args.anbieter, modell=args.modell, runner=args.runner,
             werkzeuge="lesen,schreiben", max_runden=args.max_runden, zeit=args.zeit, ordner=None,
             material=material, ueber_litellm=False, fortsetzen=None, aufwand=args.aufwand,
+            projekt=None, schreibend=False, art="review",
         )
         return fuehre_aus(lauf_args)

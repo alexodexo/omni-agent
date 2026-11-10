@@ -9,7 +9,7 @@ mit Doku-Seiten je Aussage: [`recherche/plugin-doku-auszug.md`](recherche/plugin
 1. Ein **Plugin** ist ein Ordner. Mehr nicht. Claude Code lädt daraus Skills, Hooks, MCP-Server und Befehle.
 2. Ein **Marketplace** ist eine Liste (`marketplace.json`), die sagt: „Diese Plugins gibt es, hier liegen sie.“
 3. Ein öffentliches GitHub-Repo kann **beides zugleich** sein. Eine Anmeldung bei Anthropic ist nicht nötig.
-4. Slash-Befehle sind **Skills**: `skills/run/SKILL.md` im Plugin `omni-agent` wird zu `/omni-agent:run`.
+4. Slash-Befehle sind **Skills oder Commands**: `commands/run.md` im Plugin `omni-agent` wird zu `/omni-agent:run`. Ab 1.1.1 nutzen wir `commands/` für alles, was die Nutzerin tippt (mit `!`-Einschub für Befehle ohne Modell), und `skills/` nur noch für interne Anleitungen.
 5. Skills sind **Text für Claude**, kein Code. Code liegt in `bin/`, in Hooks oder in MCP-Servern.
 6. API-Schlüssel gehören in `userConfig` mit `sensitive: true`. **Aber:** Dieser Weg erreicht `bin/`-Skripte nicht (Abschnitt 7).
 7. Das Plugin wird beim Installieren in einen **Cache kopiert**. Alles, was es braucht, muss im Ordner liegen.
@@ -70,17 +70,17 @@ omni-agent/
 ├── .claude-plugin/
 │   ├── plugin.json              Name, Beschreibung, userConfig
 │   └── marketplace.json         Katalog mit einem Eintrag, source "./"
+├── agents/lauf.md           Subagent omni-agent:lauf (dünner Weiterleiter)
+├── commands/                /omni-agent:run, :review, :status, :result, :cancel, :konten, :doctor, :setup
+├── hooks/hooks.json         SessionStart, SessionEnd, Stop
 ├── skills/
-│   ├── run/SKILL.md             /omni-agent:run     Auftrag starten
-│   ├── setup/SKILL.md           /omni-agent:setup   Einrichtung führen
-│   ├── doctor/SKILL.md          /omni-agent:doctor  prüfen, was fehlt
-│   ├── status/SKILL.md          /omni-agent:status  Läufe und Berichte
-│   └── delegieren/SKILL.md      Claude entscheidet selbst, wann ein Fremdagent passt
+│   ├── omni-agent-laufzeit/SKILL.md   intern: Vertrag des Subagenten
+│   ├── omni-agent-auftrag/SKILL.md    intern: Auftrag schreiben
+│   └── omni-agent-ergebnis/SKILL.md   intern: Ergebnisse weitergeben
 ├── bin/
 │   └── omni-agent                Der Kern (ausführbar), ruft lib/ auf
 ├── lib/                         Runner-Adapter, Anbieter-Logik (Python)
 ├── providers.json               Anbieter als Daten
-├── hooks/hooks.json             optional
 ├── INSTALL.md                   für Claude geschrieben („installiere mir das“)
 ├── AGENTS.md                    dasselbe für Codex und andere Orchestratoren
 ├── README.md   LICENSE   .gitignore
@@ -155,10 +155,12 @@ Starte mit `omni-agent run $ARGUMENTS` im Hintergrund …
 **Textbausteine im Skill:** `$ARGUMENTS` (alles hinter dem Befehl), `$0` (erstes Wort), `${CLAUDE_PLUGIN_ROOT}`,
 `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_SKILL_DIR}`. `` !`befehl` `` läuft **vor** dem Senden; scheitert er, bricht der Aufruf ab.
 
-**Zwei Arten für Omni-Agent:**
-- *Befehl* (`run`, `setup`, `doctor`, `status`): `disable-model-invocation: true`, du löst sie bewusst aus.
-- *Wissen* (`delegieren`): ohne dieses Flag, damit Claude von selbst auf Omni-Agent kommt, wenn du sagst
-  „lass das DeepSeek recherchieren“.
+**Drei Arten für Omni-Agent (ab 1.1.1):**
+- *Befehl* (`commands/*.md`): `disable-model-invocation: true`, du löst sie bewusst aus. `status`, `result`, `cancel`, `doctor`, `konten`
+  führen ihren Befehl per `!`-Einschub aus, ohne dass ein Modell dazwischen steht. `run` ruft den Subagenten.
+- *Subagent* (`agents/lauf.md`): Damit Claude (auch in `/goal`) von selbst delegieren kann. Die Beschreibung ist der Auslöser.
+  Gesperrte Befehle kann Claude nicht selbst rufen, der Subagent schon.
+- *Interne Skills* (`user-invocable: false`): Anleitung, die der Subagent oder die Befehle laden.
 
 ---
 
