@@ -3,6 +3,8 @@
 Stand: laut Herstellerdoku gebaut, NICHT live geprüft (opencode war nicht installiert).
 Zwei Versionslinien existieren, Exit-Codes sind nicht dokumentiert: der Fertig-Beweis ist bericht.md.
 """
+from __future__ import annotations
+
 import json
 
 from .basis import Befehl, LaufKontext, Runner, grundumgebung, kurz
@@ -60,5 +62,8 @@ class OpencodeRunner(Runner):
             return [f"Werkzeug {zustand['runden']}: {teil.get('tool') or typ}"]
         if typ == "text":
             text = (o.get("part") or {}).get("text") or ""
-            return [f"Agent: {kurz(text)}"] if text.strip() else []
+            if text.strip():
+                zustand["ergebnis"] = text  # letzte Antwort: im Projektmodus wird daraus der Bericht
+                return [f"Agent: {kurz(text)}"]
+            return []
         return []

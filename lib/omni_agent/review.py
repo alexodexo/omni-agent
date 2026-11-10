@@ -1,4 +1,6 @@
 """Code-Review durch ein anderes Modell: Git-Diff sammeln, prüfen, als Material in einen Lauf geben."""
+from __future__ import annotations
+
 import argparse
 import re
 import subprocess

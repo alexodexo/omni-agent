@@ -8,7 +8,7 @@ Bitte **nicht** als öffentliches Issue. Nutze [Private Vulnerability Reporting]
 
 - Jeder Lauf startet in einer sauberen Umgebung und bekommt nur den einen Schlüssel, den er braucht.
 - Schlüssel liegen in `~/.omni-agent/env` (Rechte 600) und werden in Logs geschwärzt. Omni-Agent verweigert die Datei, wenn andere sie lesen können.
-- Standard ohne Shell. Fremdanbieter laufen nie im Projektmodus.
+- Standard ohne Shell. Im Projektmodus lesen Agenten nur, solange du `--schreibend` nicht setzt.
 - Der Review sendet nichts, wenn der Diff mögliche Geheimnisse oder `.env`-Dateien enthält.
 
 Die vollständige Liste steht im Abschnitt [Sicherheit der README](README.md#sicherheit).

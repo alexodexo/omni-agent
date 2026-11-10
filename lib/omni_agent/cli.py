@@ -1,4 +1,6 @@
 """Kommandozeile: omni-agent setup | doctor | run | status | anbieter | runner | extras."""
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -434,7 +436,78 @@ def cmd_konto(args) -> int:
     return 0
 
 
+# ---------- fernziele ----------
+
+def cmd_host(args) -> int:
+    from . import hosts
+    if args.aktion == "list":
+        eintraege = hosts.lade()
+        if not eintraege:
+            print("Noch kein Ziel. Anlegen: omni-agent host add mini --ssh benutzer@adresse   (Tailscale-Name oder -IP geht auch)")
+            return 0
+        for name, e in eintraege.items():
+            print(f"{name:<12} ssh {e['ssh']:<32} Befehl: {e.get('befehl') or hosts.STANDARD_BEFEHL}")
+        print("\nBenutzen: omni-agent run --host NAME ...  (auch status, result, cancel, warte, nutzung, doctor)")
+        return 0
+    if not args.name:
+        raise KonfigFehler("Bitte einen Zielnamen angeben, z. B.: omni-agent host add mini --ssh benutzer@adresse")
+    if args.aktion == "add":
+        if not args.ssh:
+            raise KonfigFehler("--ssh BENUTZER@ADRESSE fehlt (Name, IP oder Tailscale-Name)")
+        hosts.fuege_hinzu(args.name, args.ssh, args.befehl, args.ersetzen)
+        print(f"Ziel '{args.name}' angelegt ({args.ssh}). Prüfen: omni-agent host test {args.name}")
+        return 0
+    if args.aktion == "remove":
+        hosts.entferne(args.name)
+        print(f"Ziel '{args.name}' entfernt.")
+        return 0
+    if args.aktion == "install":
+        pfad = hosts.installiere(args.name)
+        print(f"Omni-Agent liegt auf '{args.name}' unter {pfad}. Schlüssel und Anmeldungen dort einrichten: omni-agent host setup {args.name}")
+        return 0
+    if args.aktion == "setup":
+        return hosts.leite_weiter(args.name, ["setup"])
+    ok, text = hosts.teste(args.name)
+    print(text.rstrip() if ok else f"Ziel '{args.name}': {text}")
+    return 0 if ok else EXIT_KONFIG
+
+
+# ---------- nutzung ----------
+
+def cmd_nutzung(args) -> int:
+    """Nutzung und Guthaben, soweit der jeweilige Anbieter sie hergibt. Alle Abfragen laufen parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import konten, nutzung
+    ziel = (args.ziel or "").lower()
+    aufgaben = []  # (Name, Art, Funktion)
+    for k in konten.liste():
+        if ziel in ("", "konten", "claude", k["name"], k["id"]):
+            aufgaben.append((k["id"], "Claude-Konto", lambda k=k: konten.nutzung(k)))
+    if ziel in ("", "codex") and RUNNER["codex"].pfad():
+        aufgaben.append(("codex", "Anmeldung der Codex-CLI", nutzung.codex_nutzung))
+    datei = lese_schluesseldatei()
+    for a in lade_anbieter().values():
+        if a.konto_art or a.id.startswith("claude-") or (ziel and ziel != a.id) or (not ziel and a.id not in nutzung.ABFRAGEN):
+            continue
+        schluessel = next((w for n in a.key_envs if (w := hole_schluessel(n, datei))), None)
+        if not schluessel and not ziel:
+            continue  # ohne Schlüssel nur auf Zuruf melden, sonst Rauschen
+        aufgaben.append((a.id, a.name, lambda a=a, s=schluessel: nutzung.guthaben(a.id, s)))
+    if not aufgaben:
+        print("Nichts zu zeigen: kein Claude-Konto, kein Codex, kein Anbieter mit Schlüssel. Einrichten: omni-agent setup")
+        return 0
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        ergebnisse = list(pool.map(lambda t: t[2](), aufgaben))
+    for (name, art, _), text in zip(aufgaben, ergebnisse):
+        print(f"{name:<16} {art}")
+        print(f"{'':<16} {text}")
+    print("\nQuellen: Claude-Konten = Rate-Limit-Header (eine Ein-Token-Anfrage je Konto), Codex = `codex app-server`, "
+          "Fremdanbieter = deren Guthaben-Abfrage. Ohne Angabe des Anbieters steht dort nichts.")
+    return 0
+
+
 # ---------- anbieter / runner ----------
+
 
 def cmd_anbieter(args) -> int:
     for a in lade_anbieter().values():
@@ -512,7 +585,7 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--ueber-litellm", action="store_true", help="OpenAI-Anbieter für Claude Code über das Extra LiteLLM übersetzen")
     s.add_argument("--fortsetzen", nargs="?", const="", default=None, metavar="LAUF", help="Nachfrage an einen früheren Lauf (ohne Namen: der letzte); --text ist die Nachfrage")
     s.add_argument("--aufwand", choices=["minimal", "low", "medium", "high", "xhigh"], help="Denkaufwand (nur Codex)")
-    s.add_argument("--projekt", nargs="?", const="", default=None, metavar="ORDNER", help="im Projektordner arbeiten (ohne Wert: aktuelles Verzeichnis), nur lesen; nur mit Claude-Konten und Codex")
+    s.add_argument("--projekt", nargs="?", const="", default=None, metavar="ORDNER", help="im Projektordner arbeiten (ohne Wert: aktuelles Verzeichnis), nur lesen (mit jedem Anbieter, die Entscheidung liegt bei dir)")
     s.add_argument("--schreibend", action="store_true", help="mit --projekt: Dateien im Projekt dürfen geändert werden")
     s.add_argument("--hintergrund", action="store_true", help="als losgelöster Prozess starten und sofort den Laufnamen melden")
     s.add_argument("--warten", type=int, metavar="SEK", help="losgelöst starten und höchstens so lange auf das Ende warten (meldet dann Stand oder Bericht)")
@@ -564,6 +637,16 @@ def baue_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_hook)
 
     sub.add_parser("anbieter", help="Anbieter mit Datenort auflisten").set_defaults(fn=cmd_anbieter)
+    s = sub.add_parser("host", help="Fernziele (Mac mini, Server) für --host: add, list, remove, test, install, setup")
+    s.add_argument("aktion", nargs="?", default="list", choices=["add", "list", "remove", "test", "install", "setup"])
+    s.add_argument("name", nargs="?", help="Zielname, z. B. mini")
+    s.add_argument("--ssh", metavar="BENUTZER@ADRESSE", help="Ziel für ssh: Name, IP oder Tailscale-Name")
+    s.add_argument("--befehl", help="Pfad zu omni-agent auf dem Ziel (Standard: omni-agent im PATH; host install setzt ihn selbst)")
+    s.add_argument("--ersetzen", action="store_true", help="vorhandenes Ziel gleichen Namens überschreiben")
+    s.set_defaults(fn=cmd_host)
+    s = sub.add_parser("nutzung", help="Nutzung und Guthaben: Claude-Konten, Codex, DeepSeek, Kimi, OpenRouter, EUrouter")
+    s.add_argument("ziel", nargs="?", help="nur dieses Konto oder diesen Anbieter zeigen (konten, codex, deepseek, ...)")
+    s.set_defaults(fn=cmd_nutzung)
     s = sub.add_parser("konto", help="Benannte Claude-Konten (beliebig viele): add, list, remove, standard")
     s.add_argument("aktion", choices=["add", "list", "remove", "standard"])
     s.add_argument("name", nargs="?", help="Kontoname, z. B. felipe oder fps")
@@ -584,12 +667,21 @@ def baue_parser() -> argparse.ArgumentParser:
     s.add_argument("--modell")
     s.add_argument("--trotzdem", action="store_true", help="Install trotz anderer Python-Version")
     s.set_defaults(fn=cmd_extras)
+    for name in ("run", "review", "status", "result", "cancel", "warte", "doctor", "nutzung"):
+        sub.choices[name].add_argument("--host", metavar="ZIEL", help="auf einem Fernziel ausführen (omni-agent host add), per ssh; Schlüssel und Projekte liegen dort")
     return p
 
 
 def main(argv=None) -> int:
     args = baue_parser().parse_args(argv)
     args._argv = list(argv) if argv is not None else sys.argv[1:]
+    if getattr(args, "host", None):
+        from . import hosts
+        try:
+            return hosts.leite_weiter(args.host, args._argv, args)
+        except KonfigFehler as fehler:
+            print(f"Fehler: {fehler}", file=sys.stderr)
+            return fehler.exit_code
     if args.befehl == "run" and not args.auftrag and args.text is None:
         print("Auftragsdatei oder --text angeben", file=sys.stderr)
         return EXIT_KONFIG

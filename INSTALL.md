@@ -6,7 +6,7 @@ Arbeite die Schritte in dieser Reihenfolge ab. Führe nichts aus, was hier nicht
 ## 1. Voraussetzungen prüfen
 
 ```bash
-python3 --version      # 3.10 oder neuer nötig
+python3 --version      # 3.9 oder neuer nötig
 claude --version       # Standard-Runner
 ```
 

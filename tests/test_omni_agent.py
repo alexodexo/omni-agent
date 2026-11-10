@@ -842,7 +842,7 @@ class PluginAufbau(unittest.TestCase):
             self.assertEqual(_frontmatter(WURZEL / "skills" / name / "SKILL.md")["user-invocable"], "false", name)
 
     def test_befehle_vollstaendig_und_nur_setup_darf_das_modell_rufen(self):
-        erwartet = {"run", "review", "adversarial-review", "status", "result", "cancel", "doctor", "konten", "setup"}
+        erwartet = {"run", "review", "adversarial-review", "status", "result", "cancel", "doctor", "konten", "nutzung", "hosts", "setup"}
         vorhanden = {p.stem for p in (WURZEL / "commands").glob("*.md")}
         self.assertEqual(vorhanden, erwartet)
         for name in erwartet:
@@ -1090,11 +1090,15 @@ class Projektmodus(Farm):
         self.assertIn("Edit", werkzeuge)
         self.assertNotIn("Bash", werkzeuge)
 
-    def test_projekt_mit_fremdanbieter_wird_verweigert(self):
-        erg = self._lauf_in(self.projekt, "run", "--anbieter", "deepseek", "--projekt", "--text", "x")
-        self.assertEqual(erg.returncode, 2)
-        self.assertIn("nur mit Claude-Konten und Codex", erg.stderr)
-        self.assertFalse((self.home / "laeufe").exists())
+    def test_projekt_mit_fremdanbieter_ist_erlaubt_und_nur_lesend(self):
+        erg = self._lauf_in(self.projekt, "run", "--anbieter", "deepseek", "--projekt", "--text", "Lies code.py")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertEqual((self.bin / "cwd.log").read_text().strip(), str(self.projekt.resolve()))
+        argv = json.loads((self.bin / "argv.log").read_text().splitlines()[-1])
+        werkzeuge = argv[argv.index("--allowed-tools") + 1:]
+        self.assertIn("Read", werkzeuge)
+        for verboten in ("Write", "Edit", "Bash"):
+            self.assertNotIn(verboten, werkzeuge)
 
     def test_schreibend_ohne_projekt_und_projekt_mit_material_scheitern(self):
         self.assertEqual(self._lauf_in(self.projekt, "run", "--konto", "tk", "--schreibend", "--text", "x").returncode, 2)
@@ -1250,6 +1254,138 @@ class ReviewVertrag(Farm):
         self.assertEqual(erg.returncode, 0, erg.stderr)
         self.assertIn("nichts gesendet", erg.stdout)
         self.assertFalse((self.home / "laeufe").exists())
+
+
+class Fernziele(MitHome):
+    """--host leitet per ssh weiter. Ein vorgetäuschtes ssh protokolliert, was es bekommt."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "ssh"
+        fake.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import json, sys, pathlib
+            d = pathlib.Path(__file__).parent
+            with open(d / "ssh.log", "a") as f:
+                f.write(json.dumps(sys.argv[1:]) + "\\n")
+            code = int((d / "code").read_text()) if (d / "code").exists() else 0
+            print("antwort vom ziel")
+            sys.exit(code)
+            """))
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        self.env = {**os.environ, "OMNI_AGENT_HOME": str(self.home), "PATH": f"{self.bin}:{os.environ['PATH']}"}
+        self.env.pop("OMNI_AGENT_SITZUNG", None)
+
+    def cli(self, *args, **env):
+        return subprocess.run([sys.executable, str(BIN), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+
+    def letzter_ssh(self):
+        return json.loads((self.bin / "ssh.log").read_text().splitlines()[-1])
+
+    def test_host_add_prueft_eingabe_und_listet(self):
+        self.assertEqual(self.cli("host", "add", "mini", "--ssh", "alex@100.64.0.7").returncode, 0)
+        self.assertIn("alex@100.64.0.7", self.cli("host", "list").stdout)
+        self.assertEqual(self.cli("host", "add", "mini", "--ssh", "x@y").returncode, 2)  # gibt es schon
+        self.assertEqual(self.cli("host", "add", "boese", "--ssh", "-oProxyCommand=x").returncode, 2)
+        self.assertEqual(self.cli("host", "add", "leer", "--ssh", "a b").returncode, 2)
+        self.assertEqual(self.cli("host", "add", "Gross", "--ssh", "x@y").returncode, 2)
+
+    def test_run_wird_unveraendert_weitergeleitet_ohne_host(self):
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        erg = self.cli("run", "--host", "mini", "--anbieter", "codex", "--warten", "60", "--text", "Frage mit 'Hochkomma' und $VAR")
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        self.assertIn("antwort vom ziel", erg.stdout)
+        argv = self.letzter_ssh()
+        self.assertEqual(argv[argv.index("--") + 1], "alex@mini")
+        entfernt = argv[-1]
+        self.assertTrue(entfernt.startswith("omni-agent run "))
+        self.assertNotIn("--host", entfernt)
+        self.assertIn("--warten 60", entfernt)
+        self.assertIn("'Frage mit '\"'\"'Hochkomma'\"'\"' und $VAR'", entfernt)  # zitiert, nichts wird lokal oder entfernt ausgewertet
+        self.assertIn("BatchMode=yes", argv)
+
+    def test_sitzung_geht_mit(self):
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        self.cli("status", "--host", "mini", OMNI_AGENT_SITZUNG="sitz-1")
+        self.assertTrue(self.letzter_ssh()[-1].startswith("OMNI_AGENT_SITZUNG=sitz-1 omni-agent status"))
+
+    def test_lokale_auftragsdatei_wird_als_text_mitgeschickt(self):
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        datei = Path(self.tmp.name) / "auftrag.md"
+        datei.write_text("Lies alles und fasse zusammen")
+        erg = self.cli("run", "--host", "mini", str(datei))
+        self.assertEqual(erg.returncode, 0, erg.stderr)
+        entfernt = self.letzter_ssh()[-1]
+        self.assertNotIn(str(datei), entfernt)
+        self.assertIn("--text 'Lies alles und fasse zusammen'", entfernt)
+
+    def test_material_und_review_gehen_nicht_mit_host(self):
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        material = Path(self.tmp.name) / "mat"
+        material.mkdir()
+        self.assertEqual(self.cli("run", "--host", "mini", "--material", str(material), "--text", "x").returncode, 2)
+        self.assertEqual(self.cli("review", "--host", "mini").returncode, 2)
+        self.assertFalse((self.bin / "ssh.log").exists())
+
+    def test_unbekanntes_ziel_und_ssh_fehler(self):
+        erg = self.cli("run", "--host", "nirgends", "--text", "x")
+        self.assertEqual(erg.returncode, 2)
+        self.assertIn("host add", erg.stderr)
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        (self.bin / "code").write_text("255")
+        erg = self.cli("status", "--host", "mini")
+        self.assertEqual(erg.returncode, 255)
+        self.assertIn("host test mini", erg.stderr)
+
+    def test_host_test_meldet_fehlenden_befehl(self):
+        self.cli("host", "add", "mini", "--ssh", "alex@mini")
+        (self.bin / "code").write_text("127")
+        erg = self.cli("host", "test", "mini")
+        self.assertNotEqual(erg.returncode, 0)
+        self.assertIn("host install mini", erg.stdout)
+
+
+class NutzungUndGuthaben(unittest.TestCase):
+    def test_codex_zeile_zeigt_plan_fenster_reset_und_gutschriften(self):
+        from omni_agent import nutzung
+        text = nutzung.codex_text({
+            "ordinaryUsageAllowed": True,
+            "rateLimits": {"planType": "prolite", "primary": {"usedPercent": 42, "windowDurationMins": 10080, "resetsAt": 1794846023},
+                           "secondary": {"usedPercent": 7, "windowDurationMins": 300, "resetsAt": 1794846023},
+                           "credits": {"hasCredits": True, "unlimited": False, "balance": "12.5"}},
+            "rateLimitResetCredits": {"availableCount": 2},
+        })
+        for teil in ("Plan prolite", "7 Tage 42% genutzt", "5 Std 7% genutzt", "Guthaben 12.5", "2 Reset-Gutschriften"):
+            self.assertIn(teil, text)
+
+    def test_codex_meldet_sperre(self):
+        from omni_agent import nutzung
+        text = nutzung.codex_text({"ordinaryUsageAllowed": False, "rateLimits": {"rateLimitReachedType": "rate_limit_reached"}})
+        self.assertIn("STATUS", text)
+        self.assertIn("normale Nutzung gesperrt", text)
+
+    def test_deepseek_kimi_und_credits(self):
+        from omni_agent import nutzung
+        ds = nutzung._deepseek("k", hole=lambda u, k: {"is_available": True, "balance_infos": [{"currency": "USD", "total_balance": "9.18", "granted_balance": "0.00", "topped_up_balance": "9.18"}]})
+        self.assertIn("Guthaben 9.18 USD", ds)
+        leer = nutzung._deepseek("k", hole=lambda u, k: {"is_available": False, "balance_infos": []})
+        self.assertIn("STATUS", leer)
+        kimi = nutzung._kimi("k", hole=lambda u, k: {"data": {"available_balance": 3.5, "voucher_balance": 1, "cash_balance": 2.5}})
+        self.assertIn("verfügbar 3.50", kimi)
+        cr = nutzung._credits("https://x/api/v1", "EUR")("k", hole=lambda u, k: {"data": {"total_credits": 10, "total_usage": 2.5}})
+        self.assertIn("Guthaben 7.50 EUR", cr)
+
+    def test_guthaben_ist_ehrlich_ohne_abfrage_und_ohne_schluessel(self):
+        from omni_agent import nutzung
+        self.assertEqual(nutzung.guthaben("nvidia", "k"), "keine Abfrage bekannt")
+        self.assertEqual(nutzung.guthaben("deepseek", None), "Schlüssel fehlt")
+        self.assertIn("lokal", nutzung.guthaben("ollama", None))
+
+        def kaputt(schluessel):
+            raise KonfigFehler("HTTP 401")
+        self.assertIn("HTTP 401", nutzung.guthaben("deepseek", "k", {"deepseek": kaputt}))
 
 
 if __name__ == "__main__":

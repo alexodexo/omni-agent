@@ -9,6 +9,8 @@ Zwei Arten:
 Codex kann keine einzelnen Werkzeuge verbieten, seine Shell ist immer da (nur durch die Sandbox begrenzt).
 Darum verlangt der Kern hier ausdrücklich `--werkzeuge +shell`.
 """
+from __future__ import annotations
+
 import json
 import os
 import shutil

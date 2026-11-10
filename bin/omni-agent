@@ -4,8 +4,8 @@ weil ${CLAUDE_PLUGIN_ROOT} in Bash-Tool-Befehlen nicht gesetzt ist."""
 import os
 import sys
 
-if sys.version_info < (3, 10):
-    sys.exit("Omni-Agent braucht Python 3.10 oder neuer.")
+if sys.version_info < (3, 9):
+    sys.exit("Omni-Agent braucht Python 3.9 oder neuer.")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 

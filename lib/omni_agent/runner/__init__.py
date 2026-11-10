@@ -1,4 +1,6 @@
 """Runner-Register und Passungsregel (Protokoll des Anbieters x Protokolle des Runners)."""
+from __future__ import annotations
+
 from ..konfig import KonfigFehler
 from .basis import STANDARD_WERKZEUGE, WERKZEUGE, Runner
 from .claude import ClaudeRunner

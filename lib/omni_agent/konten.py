@@ -3,6 +3,8 @@
 Ein Konto ist ein Anbieter-Eintrag unter ~/.omni-agent/providers.d/konto-<name>.json (ohne Geheimnis)
 plus eine Zeile OMNI_AGENT_KONTO_<NAME>=… in ~/.omni-agent/env. Aufruf: --anbieter claude-<name>.
 """
+from __future__ import annotations
+
 import json
 import os
 import re

@@ -1,4 +1,6 @@
 """Runner `claude`: Claude Code im Headless-Modus (`claude -p`). Standard, am besten dokumentiert."""
+from __future__ import annotations
+
 import json
 
 from .basis import Befehl, LaufKontext, Runner, grundumgebung, kurz

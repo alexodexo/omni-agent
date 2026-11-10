@@ -5,6 +5,8 @@ in einer eigenen virtuellen Umgebung. Der Proxy lauscht nur auf 127.0.0.1 und be
 Hintergrund: litellm 1.107.0 war am 21.10.2026 kompromittiert (PyPI und Docker-Images). Vor jedem Pin-Wechsel
 die Vorfallsseite des Herstellers lesen.
 """
+from __future__ import annotations
+
 import json
 import os
 import re

@@ -3,6 +3,8 @@
 Hooks lesen ein JSON von Claude Code auf stdin. Ein Hook darf nie die Sitzung stören: jede Störung
 (kein Git, kein Anbieter, Zeitüberschreitung) heißt hier „durchlassen" und eine Zeile auf stderr.
 """
+from __future__ import annotations
+
 import argparse
 import contextlib
 import hashlib

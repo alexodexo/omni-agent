@@ -1,4 +1,6 @@
 """Anbieter: Wer liefert das Modell, in welchem Format, mit welchem Schlüssel."""
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 

@@ -4,6 +4,8 @@ Die Developer Preview (0.1.x, mit angekündigten Brüchen) ist per `dsh --profil
 Wie das Profil seinen Schlüssel liest, ist nicht dokumentiert; Omni-Agent reicht DEEPSEEK_API_KEY durch und
 verlässt sich auf bericht.md als einzigen Fertig-Beweis.
 """
+from __future__ import annotations
+
 from .basis import Befehl, LaufKontext, Runner, grundumgebung, kurz
 
 

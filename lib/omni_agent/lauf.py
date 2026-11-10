@@ -1,4 +1,6 @@
 """Einen Auftrag ausführen: Anbieter + Runner wählen, starten, überwachen, Ergebnis festhalten."""
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -240,11 +242,6 @@ def fuehre_aus(args) -> int:
         projekt = Path(projekt_wunsch or os.getcwd()).expanduser().resolve()
         if not projekt.is_dir():
             raise KonfigFehler(f"Projektordner nicht gefunden: {projekt}")
-        if not anbieter.konto_art:
-            raise KonfigFehler(
-                f"--projekt gibt dem Agenten Zugriff auf {projekt}. Das geht nur mit Claude-Konten und Codex, "
-                f"nicht mit dem Fremdanbieter '{anbieter.id}' (Datenort {anbieter.region}). Dafür Material gezielt mit --material übergeben."
-            )
         if getattr(args, "material", None):
             raise KonfigFehler("--projekt und --material schließen sich aus: im Projektmodus liegt alles schon im Projektordner.")
         if not schreibend:

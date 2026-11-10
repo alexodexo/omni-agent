@@ -24,7 +24,8 @@ omni-agent warte LAUF --max 540
 | `--konto NAME` | Claude-Konto (fbs, felipe, llc, siehe `omni-agent konto list`). |
 | `--anbieter ID` | Fremdanbieter oder `codex`. Nur, wenn die Nutzerin ihn genannt hat. |
 | `--modell`, `--aufwand` | Nur auf ausdrücklichen Wunsch. `--aufwand` gilt nur für Codex. |
-| `--projekt` | Der Agent arbeitet im Projektordner (aktuelles Verzeichnis), standardmäßig nur lesend. Nur mit Claude-Konten und Codex. |
+| `--host ZIEL` | Auf einem Fernziel ausführen (Mac mini o. ä.). Nur, wenn die Nutzerin ein Ziel genannt hat; `--projekt` meint dann einen Pfad dort, `--material` geht nicht. |
+| `--projekt` | Der Agent arbeitet im Projektordner (aktuelles Verzeichnis), standardmäßig nur lesend. Mit jedem Anbieter möglich. |
 | `--schreibend` | Mit `--projekt`: Dateien im Projekt dürfen geändert werden. Nur, wenn die Nutzerin Änderungen ausdrücklich will. |
 | `--fortsetzen` | Nachfrage an den letzten Agenten (ohne Namen: letzter Lauf dieser Sitzung). `--text` ist die Nachfrage. |
 
@@ -40,7 +41,7 @@ Bash-Aufrufe immer mit `timeout: 600000` (10 Minuten, das Maximum).
 
 - Keine Angabe der Nutzerin: weder `--konto` noch `--anbieter`. Dann gilt der Standard der Nutzerin.
 - Ein Fremdanbieter wird **nie** von dir gewählt.
-- Projektmodus: Bezieht sich der Auftrag auf Dateien oder Code des Projekts und der Anbieter ist ein Claude-Konto, Codex oder der Standard, setze `--projekt`. Mit einem Fremdanbieter geht das nicht (der Befehl verweigert es).
+- Projektmodus: Bezieht sich der Auftrag auf Dateien oder Code des Projekts setze `--projekt`. Das geht mit jedem Anbieter; bei einem Fremdanbieter, den die Nutzerin genannt hat, gehen die gelesenen Dateien an dessen Datenort, das ist ihre Entscheidung.
 
 ## Nicht tun
 
