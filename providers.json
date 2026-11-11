@@ -51,14 +51,15 @@
     {
       "id": "eurouter",
       "name": "EUrouter",
-      "protocols": ["openai-chat", "openai-responses"],
+      "protocols": ["anthropic", "openai-chat", "openai-responses"],
       "base_url": "https://api.eurouter.ai/api/v1",
+      "base_urls": {"anthropic": "https://api.eurouter.ai/api"},
       "key_envs": ["EUROUTER_API_KEY"],
-      "models": {},
+      "models": {"default": "glm-5.3", "small": "glm-5.3-flash"},
+      "claude_env": {"CLAUDE_CODE_MODEL_CAPABILITIES": "-mid_conv_system,-mid_conv_tool_change"},
       "region": "EU (per provider)",
-      "verified": false,
-      "note": "Speaks OpenAI formats only. Use with --runner opencode or codex, or Claude Code through the LiteLLM extra (--via-litellm). Choose the model name from the EUrouter catalog with --model.",
-      "model_required": true
+      "verified": true,
+      "note": "Speaks the Anthropic format too (/v1/messages), so Claude Code runs on it directly. Claude Code puts the environment block into a message with the role system, which EUrouter rejects; claude_env switches that off (CLAUDE_CODE_MODEL_CAPABILITIES). Live tested with glm-5.3. Any model of the EUrouter catalog works with --model (glm-5.3 is the default, glm-5.3-flash the small tier). The EU hosts differ per model; the response header names the host. Not every host fits personal data: check https://api.eurouter.ai/api/v1/providers."
     },
     {
       "id": "nvidia",

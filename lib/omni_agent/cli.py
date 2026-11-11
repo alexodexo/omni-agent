@@ -445,13 +445,23 @@ def cmd_account(args) -> int:
 def cmd_host(args) -> int:
     from . import hosts
     if args.operation == "list":
-        entries = hosts.load()
+        entries = hosts.names_only()
         if not entries:
             print("No host yet. Add one: omni-agent host add mini --ssh user@address   (a Tailscale name or IP works too)")
             return 0
+        default = hosts.default_name()
         for name, e in entries.items():
-            print(f"{name:<12} ssh {e['ssh']:<32} command: {e.get('command') or hosts.DEFAULT_COMMAND}")
-        print("\nUse it: omni-agent run --host NAME ...  (also status, result, cancel, wait, usage, doctor)")
+            mark = "  (default)" if name == default else ""
+            print(f"{name:<12} ssh {e['ssh']:<32} command: {e.get('command') or hosts.DEFAULT_COMMAND}{mark}")
+        print("\nUse it: omni-agent run --host NAME ...  (also status, result, cancel, wait, usage, doctor). --host local runs here.")
+        return 0
+    if args.operation == "default" and not args.name and not args.clear:
+        current = hosts.default_name()
+        print(f"Default host: {current}   (clear: omni-agent host default --clear)" if current else "No default host. Set one: omni-agent host default NAME")
+        return 0
+    if args.operation == "default" and args.clear:
+        hosts.set_default(None)
+        print("Default host cleared. Commands run here again unless you pass --host.")
         return 0
     if not args.name:
         raise ConfigError("Please give a host name, e.g.: omni-agent host add mini --ssh user@address")
@@ -465,6 +475,11 @@ def cmd_host(args) -> int:
         hosts.remove_entry(args.name)
         print(f"Host '{args.name}' removed.")
         return 0
+    if args.operation == "default":
+        hosts.lookup(args.name)
+        hosts.set_default(args.name)
+        print(f"'{args.name}' is now the default: run, status, result, cancel, wait, usage, doctor and review go there. --host local runs here.")
+        return 0
     if args.operation == "install":
         file_path = hosts.install_on_target(args.name)
         print(f"Omni-Agent is installed on '{args.name}' at {file_path}. Set up keys and logins there: omni-agent host setup {args.name}")
@@ -474,6 +489,12 @@ def cmd_host(args) -> int:
     ok, text = hosts.test_target(args.name)
     print(text.rstrip() if ok else f"Host '{args.name}': {text}")
     return 0 if ok else EXIT_CONFIG
+
+
+def cmd_apply(args) -> int:
+    from . import remote_project
+    host = None if args.host in (None, "") else args.host
+    return remote_project.apply_changes(host, args.project, args.confirm, args.force)
 
 
 # ---------- usage ----------
@@ -592,6 +613,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--effort", dest="effort", choices=["minimal", "low", "medium", "high", "xhigh"], help="reasoning effort (Codex only)")
     s.add_argument("--project", dest="project", nargs="?", const="", default=None, metavar="DIR", help="work in the project folder (without a value: current directory), read-only (works with any provider, the decision is yours)")
     s.add_argument("--write", dest="writable", action="store_true", help="with --project: files in the project may be changed")
+    s.add_argument("--with-env", dest="with_env", action="store_true", help="with --host and --project: also send .env files (default: they stay home)")
     s.add_argument("--background", dest="background", action="store_true", help="start as a detached process and report the run name immediately")
     s.add_argument("--wait", dest="wait_seconds", type=int, metavar="SEC", help="start detached and wait at most this long for the end (then reports state or report)")
     s.set_defaults(fn=cmd_run)
@@ -643,12 +665,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("providers", help="List providers with their data location").set_defaults(fn=cmd_providers)
     s = sub.add_parser("host", help="Remote hosts (Mac mini, server) for --host: add, list, remove, test, install, setup")
-    s.add_argument("operation", nargs="?", default="list", metavar="action", choices=["add", "list", "remove", "test", "install", "setup"])
+    s.add_argument("operation", nargs="?", default="list", metavar="action", choices=["add", "list", "remove", "test", "install", "setup", "default"])
     s.add_argument("name", nargs="?", help="host name, e.g. mini")
     s.add_argument("--ssh", metavar="USER@ADDRESS", help="ssh target: name, IP or Tailscale name")
     s.add_argument("--command", dest="command_path", help="path to omni-agent on the host (default: omni-agent on PATH; host install sets it itself)")
     s.add_argument("--replace", dest="overwrite", action="store_true", help="overwrite an existing host of the same name")
+    s.add_argument("--clear", dest="clear", action="store_true", help="with default: remove the default host")
     s.set_defaults(fn=cmd_host)
+    s = sub.add_parser("apply", help="Show (and with --yes write) the changes an agent made to a project copy on a host")
+    s.add_argument("--host", metavar="TARGET", help="the host that holds the copy (without it: the only host that has one)")
+    s.add_argument("--project", metavar="DIR", help="your project folder (default: current directory)")
+    s.add_argument("--yes", dest="confirm", action="store_true", help="write the changes into your project (without it: only show them)")
+    s.add_argument("--force", dest="force", action="store_true", help="also overwrite files you changed here since they were sent")
+    s.set_defaults(fn=cmd_apply)
     s = sub.add_parser("usage", help="Usage and balance: Claude accounts, Codex, DeepSeek, Kimi, OpenRouter, EUrouter")
     s.add_argument("selector", nargs="?", metavar="target", help="show only this account or provider (accounts, codex, deepseek, ...)")
     s.set_defaults(fn=cmd_usage)
@@ -684,14 +713,44 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+HOST_COMMANDS = ("run", "review", "status", "result", "cancel", "wait", "doctor", "usage")
+
+
+def _without_local(argv: list) -> list:
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--host" and i + 1 < len(argv) and argv[i + 1] == "local":
+            i += 2
+        elif argv[i] == "--host=local":
+            i += 1
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main(argv=None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
     args = build_parser().parse_args(argv)
     args._argv = argv
-    if getattr(args, "host", None):
+    host = getattr(args, "host", None) if args.command in HOST_COMMANDS else None
+    if host == "local":
+        host = None
+        args._argv = argv = _without_local(argv)
+    elif host is None and args.command in HOST_COMMANDS and not os.environ.get("OMNI_AGENT_ON_HOST"):
+        from . import hosts
+        host = hosts.default_name()
+        if host and not (args.command == "review" and getattr(args, "preview", False)):
+            print(f"(host: {host}, the default. --host local runs here)", flush=True)
+        else:
+            host = None
+    if host:
         from . import hosts
         try:
-            return hosts.forward(args.host, args._argv, args)
+            if args.command == "review":
+                args.host = host
+                return args.fn(args)
+            return hosts.forward(host, args._argv, args)
         except ConfigError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return exc.exit_code

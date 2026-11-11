@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+- **Projects on other machines.** `run --host NAME --project` (and `--files`) copies the project to the host with rsync (git-tracked plus new files, never `.git`, never secrets), the agent works on that copy, and `omni-agent apply --host NAME` shows the changes as a diff; `--yes` writes them into your project. Conflicts with local edits are skipped, paths from the host are validated. `/omni-agent:apply`. Live tested on a Mac mini over a Tailscale address.
+- **`review --host`** collects and checks the diff locally and sends only the review files. **`--files`** works with `--host`.
+- **Default host:** `omni-agent host default NAME` sends `run`, `review`, `status`, `result`, `cancel`, `wait`, `usage` and `doctor` there; `--host local` runs here.
+- **`--with-env`** sends `.env` files along with a project; they stay home otherwise.
+- **EUrouter speaks the Anthropic format.** The provider now runs with Claude Code directly (`/v1/messages`), no translator needed; default model `glm-5.3`, small tier `glm-5.3-flash`. Live tested with glm-5.3. New provider keys `base_urls` (address per protocol) and `claude_env` (compatibility environment for Claude Code; EUrouter rejects the `system` role Claude Code uses for its environment block).
+
 ## 1.3.0
 
 - **Clean break: 1.3.0 keeps no compatibility with the German names.** Old subcommands, flags, hook names, tool names (`lesen`, `schreiben`, `web_suche`, `web_laden`), `an`/`aus`, env vars (`OMNI_AGENT_KONTO_<NAME>`, `OMNI_AGENT_LAUF`, `OMNI_AGENT_SITZUNG`, ...), config keys, `providers.json` keys and tier names, `konto-*.json`, old report file names and old run states are no longer read. Users on older versions set things up again.

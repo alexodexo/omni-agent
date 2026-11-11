@@ -1,6 +1,6 @@
 ---
 description: Hands a task to an Omni-Agent run (another model, another Claude account or Codex), in the background by default
-argument-hint: '[--foreground|--background] [--resume|--new] [--account NAME | --provider ID] [--model M] [--effort low|medium|high] [--project] [--write] [task]'
+argument-hint: '[--foreground|--background] [--resume|--new] [--account NAME | --provider ID] [--model M] [--effort low|medium|high] [--project] [--write] [--host NAME] [task]'
 disable-model-invocation: true
 allowed-tools: Bash(omni-agent:*), AskUserQuestion, Agent
 ---

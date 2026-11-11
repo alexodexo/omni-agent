@@ -30,6 +30,12 @@ class Provider:
     account_kind: str | None = None  # 'api'/'token' (Claude account) or 'login' (sign-in of the agent CLI itself)
     only_runner: str | None = None  # a provider without an address runs only through exactly this runner
     litellm: dict = field(default_factory=dict)
+    base_urls: dict = field(default_factory=dict)  # address per protocol, when it differs from base_url
+    claude_env: dict = field(default_factory=dict)  # extra environment for Claude Code on this provider (compatibility switches)
+
+    def address(self, protocol: str | None) -> str | None:
+        """Address for the protocol that runner and provider agreed on."""
+        return self.base_urls.get(protocol) or self.base_url
 
     @property
     def local(self) -> bool:
@@ -83,6 +89,8 @@ def _from_dict(d: dict, source: str) -> Provider:
         account_kind=d.get("account_kind"),
         only_runner=d.get("runner_only"),
         litellm=dict(d.get("litellm", {})),
+        base_urls=dict(d.get("base_urls", {})),
+        claude_env={str(k): str(v) for k, v in dict(d.get("claude_env", {})).items()},
     )
 
 

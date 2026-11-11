@@ -43,6 +43,7 @@ class ClaudeRunner(Runner):
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = ctx.model
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = small or ctx.model
             env["CLAUDE_CODE_SUBAGENT_MODEL"] = ctx.model
+            env.update(a.claude_env)
         else:
             # Another Claude account: key under its own name, no base URL change.
             if a.account_kind and ctx.key_values:

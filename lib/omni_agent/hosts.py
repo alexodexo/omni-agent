@@ -1,7 +1,7 @@
 """Remote hosts: run Omni-Agent on another machine (Mac mini, server, cloud VM) over SSH.
 
-`--host NAME` forwards the command unchanged to `omni-agent` on the host. Keys, agent CLIs, projects and runs
-live there; none of it is transferred. Tailscale is nothing special: any name or address `ssh` can reach
+`--host NAME` forwards the command to `omni-agent` on the host. Keys, agent CLIs and runs live there. With
+`--project` or `--files` the folder is copied there first (remote_project.py); changes come back with `apply`. Tailscale is nothing special: any name or address `ssh` can reach
 (Tailscale IP, MagicDNS name, Tailscale SSH) works.
 
 Only how to reach the host is stored (`hosts.json`), never a secret.
@@ -40,6 +40,10 @@ def save(doc: dict) -> None:
     data_file().write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def names_only() -> dict:
+    return {k: v for k, v in load().items() if k != "_default"}
+
+
 def check_name(name: str) -> str:
     if not NAME.match(name or ""):
         raise ConfigError("Host name: lowercase letters, digits and hyphen, e.g. mini")
@@ -47,11 +51,27 @@ def check_name(name: str) -> str:
 
 
 def lookup(name: str) -> dict:
-    entries = load()
+    entries = names_only()
     if name not in entries:
         existing = ", ".join(entries) or "none"
         raise ConfigError(f"Host '{name}' does not exist. Existing: {existing}. Add it: omni-agent host add {name} --ssh USER@ADDRESS")
     return entries[name]
+
+
+def default_name() -> str | None:
+    name = load().get("_default")
+    return name if isinstance(name, str) and name in load() else None
+
+
+def set_default(name: str | None) -> None:
+    doc = load()
+    if name is None:
+        doc.pop("_default", None)
+    else:
+        if name not in doc:
+            raise ConfigError(f"Host '{name}' does not exist")
+        doc["_default"] = name
+    save(doc)
 
 
 def add_entry(name: str, ssh: str, command: str | None = None, overwrite: bool = False) -> None:
@@ -70,6 +90,8 @@ def remove_entry(name: str) -> None:
     if name not in entries:
         raise ConfigError(f"Host '{name}' does not exist")
     del entries[name]
+    if entries.get("_default") == name:
+        del entries["_default"]
     save(entries)
 
 
@@ -85,9 +107,9 @@ def ssh_argv(entry: dict, remote: str, tty: bool = False) -> list:
 
 def remote_command(entry: dict, argv: list) -> str:
     """The line that runs on the host. The Claude session goes along so status/result there mean the same session."""
-    lead = ""
+    lead = "OMNI_AGENT_ON_HOST=1 "  # the host must not forward again to a default host of its own
     if claude_session():
-        lead = f"OMNI_AGENT_SESSION={shlex.quote(claude_session())} "
+        lead += f"OMNI_AGENT_SESSION={shlex.quote(claude_session())} "
     command = entry.get("command") or DEFAULT_COMMAND
     # The command may start with ~ or $HOME (path to the script); the arguments are always quoted.
     return lead + command + " " + " ".join(shlex.quote(a) for a in argv)
@@ -112,20 +134,21 @@ def forward(name: str, argv: list, args=None) -> int:
     """Runs `omni-agent <argv>` on the host; output and exit code come back unchanged."""
     entry = lookup(name)
     argv = without_host(argv)
-    if args is not None:
-        command = getattr(args, "command", "")
-        if getattr(args, "files", None):
-            raise ConfigError("--files is a local folder and is not transferred. Put the files on the host and work there with --project DIR.")
-        if command == "review":
-            raise ConfigError("review checks the repo in the current folder and therefore does not work with --host. On the host: run omni-agent review in its checkout (via ssh).")
+    command = getattr(args, "command", "") if args is not None else ""
+    if command == "run":
+        from . import remote_project
+        # Project or files: copy them to the host first and point the command at the copy there
+        argv = remote_project.rewrite_run_argv(name, argv, args)
         # The task file is local: send its content as --text
-        if command == "run" and getattr(args, "task", None):
+        if getattr(args, "task", None):
             from pathlib import Path
             source = Path(args.task).expanduser()
             if source.is_file() and args.task in argv:
                 argv.remove(args.task)
                 argv += ["--text", source.read_text(encoding="utf-8")]
     running = subprocess.run(ssh_argv(entry, remote_command(entry, argv)))
+    if command == "run" and running.returncode != 255 and getattr(args, "project", None) is not None and getattr(args, "writable", False):
+        print(f"The agent worked on a copy on '{name}'. Look at its changes: omni-agent apply --host {name}   (add --yes to write them into your project)")
     if running.returncode == 255:
         print(f"Error: ssh to '{name}' ({entry['ssh']}) failed. Reachable? Key installed (BatchMode, no password prompt)? Check: omni-agent host test {name}", file=sys.stderr)
     return running.returncode

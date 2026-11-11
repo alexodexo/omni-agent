@@ -126,6 +126,7 @@ Project mode works with every provider; the decision is yours. It sends files fr
 | `/omni-agent:cancel [run]` | Cancel a running run |
 | `/omni-agent:usage [target]` | Usage and balance of all providers: Claude limits, Codex limits with plan, DeepSeek, Kimi, OpenRouter and EUrouter balances |
 | `/omni-agent:hosts [test NAME]` | Remote targets (Mac mini, server) for `--host` |
+| `/omni-agent:apply [--yes]` | Shows (with `--yes` writes) the changes an agent made to a project copy on a host |
 | `/omni-agent:accounts` | Claude accounts with usage (5 hours, 7 days) and default |
 | `/omni-agent:setup [--provider ID] [--review-gate on\|off]` | Setup, instructions for a provider, review gate |
 | `/omni-agent:doctor` | What is there, what is missing |
@@ -185,29 +186,37 @@ deepseek         Balance 9.18 USD (topped up 9.18)
 | DeepSeek, Kimi, OpenRouter, EUrouter | Balance query of the provider | Balance with currency |
 | Ollama, Nvidia, custom providers | – | explicitly says "no query known" or "runs locally" |
 
-The key goes only to the provider it belongs to. Live tested: Claude accounts, Codex and DeepSeek. Kimi, OpenRouter and EUrouter are built from their documentation. With `--host mini` you query the accounts and logins on another machine.
+The key goes only to the provider it belongs to. Live tested: Claude accounts, Codex, DeepSeek and EUrouter (glm-5.3). Kimi and OpenRouter are built from their documentation. With `--host mini` you query the accounts and logins on another machine.
 
 ## Running on other machines
 
-Mac mini, Linux server, cloud VM: anything `ssh` can reach. Tailscale addresses and MagicDNS names work the same way (Tailscale SSH without a key too). The command runs **there**; keys, agent CLIs, projects and runs stay there, nothing is transferred.
+Mac mini, Linux server, cloud VM: anything `ssh` can reach. Tailscale addresses and MagicDNS names work the same way (Tailscale SSH without a key too). The command runs **there**; keys, agent CLIs and runs stay there. Your project goes along as a **copy** and comes back only when you say so.
 
 ```bash
 omni-agent host add mini --ssh alex@mini.tailnet-name.ts.net    # or a Tailscale IP
 omni-agent host install mini      # fetches Omni-Agent via git into ~/.omni-agent-app on the target
 omni-agent host setup mini        # set up keys and logins there (in your own terminal)
 omni-agent host test mini         # ssh reachable, runners, providers
+omni-agent host default mini      # optional: run, status, review ... go to mini unless you say --host local
 
 omni-agent run --host mini --provider codex --wait 540 --text "Summarize the logs"
-omni-agent run --host mini --project ~/projects/app --account fbs --text "Why does the login hang?"
-omni-agent status --host mini
-omni-agent usage --host mini
+omni-agent run --host mini --project --write --account fbs --text "Fix the failing login test"
+omni-agent apply --host mini          # shows what the agent changed on the copy
+omni-agent apply --host mini --yes    # writes those changes into your project
 ```
 
-- `--host` works with `run`, `status`, `result`, `cancel`, `wait`, `usage` and `doctor`. Background, notification and `--wait` work as they do locally; if the ssh connection drops, the run keeps going on the target.
-- With `--project`, the folder is a path **on the target**. `--files` and `review` need local files and do not work with `--host`.
-- A local task file is sent along as text.
-- Requirements on the target: Python 3.9 or newer, `git` (only for `host install`) and an agent CLI. Login by key or Tailscale SSH, without a password prompt.
-- Live tested: Mac mini over a Tailscale address with a Codex login.
+**How a project travels (`--project`, `--files`):**
+
+1. rsync sends the files git would track plus new ones (no `.git`, no `node_modules`, no secrets) to `~/.omni-agent/remote/projects/<name>-<hash>/` on the host. Files you deleted here are removed there, so the copy is your current state. rsync is only the transport; git is not needed on the host.
+2. The agent works on that copy, read-only or with `--write`. Nothing happens to your folder.
+3. `omni-agent apply` compares the copy with what was sent and shows the changes as a diff. `--yes` writes them. Files you changed here in the meantime are skipped (`--force` overwrites). Paths from the host are checked: nothing outside the project, nothing into `.git`.
+
+- **Secrets stay home:** `.env` files, `*.pem`, `*.key`, `id_rsa*` and similar do not travel. `--with-env` sends `.env` files (when the agent must run the tests); keys and certificates never go.
+- `--files DIR` copies a folder the same way (to `~/.omni-agent/remote/files/`). `review --host mini` collects and checks the diff **here** and sends only the two small review files.
+- `--host` works with `run`, `review`, `status`, `result`, `cancel`, `wait`, `usage` and `doctor`. Background, notification and `--wait` work as they do locally; if the ssh connection drops, the run keeps going on the host.
+- A local task file is sent along as text. `--resume` continues on the host's copy without sending again.
+- Requirements: `ssh` and `rsync` on your side; `rsync`, Python 3.9 or newer and an agent CLI on the host (`git` only for `host install`). Login by key or Tailscale SSH, without a password prompt. A limit protects you: 50,000 files or 500 MB per project.
+- Live tested: Mac mini over a Tailscale address with a Codex login (project copy, change by the agent, `apply`).
 
 **Claude in the cloud:** `claude --cloud` starts a session at Anthropic against a GitHub repository. That is a different model than a run with a report and therefore not yet a `--host` target. Your own cloud machine (a VM with ssh) already works today.
 
@@ -225,7 +234,7 @@ Keys live in `~/.omni-agent/env` (line `NAME=value`, mode 600) or in an environm
 | **openrouter** | Anthropic | not documented | no | `OPENROUTER_API_KEY` |
 | **kimi** | Anthropic | not documented | no | `MOONSHOT_API_KEY` |
 | **ollama** | Anthropic | **local**, stays on the machine | no | none |
-| **eurouter** | OpenAI | EU (per provider) | no | `EUROUTER_API_KEY` |
+| **eurouter** | Anthropic and OpenAI | EU (per provider) | yes (glm-5.3) | `EUROUTER_API_KEY` |
 | **nvidia** | OpenAI (chat only) | not documented | no | `NVIDIA_API_KEY` |
 | **claude-account** | Anthropic | Anthropic | no | `ANTHROPIC_API_KEY` |
 | **codex** (OpenAI login) | OpenAI | OpenAI | yes | none: `codex login` |
@@ -268,7 +277,7 @@ Each provider speaks one format, each CLI understands only some.
 | Provider | claude | opencode | codex |
 |---|---|---|---|
 | deepseek, openrouter, kimi, ollama | yes | yes | no |
-| eurouter | only with LiteLLM | yes | yes (Responses path untested) |
+| eurouter | yes (Anthropic format) | yes | yes (Responses path untested) |
 | nvidia | only with LiteLLM | yes | no |
 | claude-account, claude-NAME | yes | – | – |
 | codex (login) | – | – | yes |

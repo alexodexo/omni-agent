@@ -90,9 +90,17 @@ class Fit(unittest.TestCase):
         self.assertTrue(fits(n, RUNNER["opencode"]))
         self.assertFalse(fits(n, RUNNER["codex"]))
         self.assertTrue(fits(e, RUNNER["codex"]))
-        self.assertFalse(fits(e, RUNNER["claude"]))
+        self.assertTrue(fits(e, RUNNER["claude"]))  # EUrouter speaks the Anthropic format too
         self.assertTrue(fits(k, RUNNER["claude"]))
         self.assertFalse(fits(k, RUNNER["opencode"]))
+
+    def test_eurouter_has_one_address_per_protocol(self):
+        e = get_provider("eurouter")
+        self.assertEqual(e.address("anthropic"), "https://api.eurouter.ai/api")  # Claude Code appends /v1/messages
+        self.assertEqual(e.address("openai-chat"), "https://api.eurouter.ai/api/v1")
+        self.assertEqual(e.pick_model(None), "glm-5.3")
+        self.assertIn("mid_conv_system", e.claude_env["CLAUDE_CODE_MODEL_CAPABILITIES"])
+        self.assertEqual(get_provider("deepseek").claude_env, {})
 
     def test_dsh_only_deepseek_and_never_automatic(self):
         self.assertTrue(fits(get_provider("deepseek"), RUNNER["dsh"]))
@@ -100,7 +108,8 @@ class Fit(unittest.TestCase):
 
     def test_effective_protocol_via_litellm(self):
         self.assertEqual(effective_protocol(get_provider("nvidia"), RUNNER["claude"], True), "anthropic")
-        self.assertIsNone(effective_protocol(get_provider("eurouter"), RUNNER["claude"], False))
+        self.assertEqual(effective_protocol(get_provider("eurouter"), RUNNER["claude"], False), "anthropic")
+        self.assertIsNone(effective_protocol(get_provider("nvidia"), RUNNER["claude"], False))
 
     def test_mismatched_request_names_a_way_out(self):
         if not RUNNER["claude"].file_path():
@@ -849,7 +858,7 @@ class PluginLayout(unittest.TestCase):
             self.assertEqual(_frontmatter(ROOT / "skills" / name / "SKILL.md")["user-invocable"], "false", name)
 
     def test_commands_complete_and_only_setup_may_be_called_by_the_model(self):
-        expected = {"run", "review", "adversarial-review", "status", "result", "cancel", "doctor", "accounts", "usage", "hosts", "setup"}
+        expected = {"run", "review", "adversarial-review", "status", "result", "cancel", "doctor", "accounts", "usage", "hosts", "setup", "apply"}
         existing = {p.stem for p in (ROOT / "commands").glob("*.md")}
         self.assertEqual(existing, expected)
         for name in expected:
@@ -1307,7 +1316,7 @@ class RemoteHosts(WithHome):
         argv = self.last_ssh()
         self.assertEqual(argv[argv.index("--") + 1], "alex@mini")
         remote = argv[-1]
-        self.assertTrue(remote.startswith("omni-agent run "))
+        self.assertTrue(remote.startswith("OMNI_AGENT_ON_HOST=1 omni-agent run "))
         self.assertNotIn("--host", remote)
         self.assertIn("--wait 60", remote)
         self.assertIn("'Question with '\"'\"'quote'\"'\"' and $VAR'", remote)  # quoted, nothing is evaluated locally or remotely
@@ -1316,7 +1325,7 @@ class RemoteHosts(WithHome):
     def test_session_goes_along(self):
         self.cli("host", "add", "mini", "--ssh", "alex@mini")
         self.cli("status", "--host", "mini", OMNI_AGENT_SESSION="sess-1")
-        self.assertTrue(self.last_ssh()[-1].startswith("OMNI_AGENT_SESSION=sess-1 omni-agent status"))
+        self.assertTrue(self.last_ssh()[-1].startswith("OMNI_AGENT_ON_HOST=1 OMNI_AGENT_SESSION=sess-1 omni-agent status"))
 
     def test_local_task_file_is_sent_along_as_text(self):
         self.cli("host", "add", "mini", "--ssh", "alex@mini")
@@ -1327,14 +1336,6 @@ class RemoteHosts(WithHome):
         remote = self.last_ssh()[-1]
         self.assertNotIn(str(data_file), remote)
         self.assertIn("--text 'Read everything and summarize'", remote)
-
-    def test_material_and_review_do_not_work_with_host(self):
-        self.cli("host", "add", "mini", "--ssh", "alex@mini")
-        files = Path(self.tmp.name) / "files"
-        files.mkdir()
-        self.assertEqual(self.cli("run", "--host", "mini", "--files", str(files), "--text", "x").returncode, 2)
-        self.assertEqual(self.cli("review", "--host", "mini").returncode, 2)
-        self.assertFalse((self.bin / "ssh.log").exists())
 
     def test_unknown_target_and_ssh_error(self):
         res = self.cli("run", "--host", "nirgends", "--text", "x")
@@ -1484,6 +1485,176 @@ class UsageAndCredits(unittest.TestCase):
         def broken(key_values):
             raise ConfigError("HTTP 401")
         self.assertIn("HTTP 401", usage.balance("deepseek", "k", {"deepseek": broken}))
+
+
+
+class RemoteProject(WithHome):
+    """--project / --files / review with --host: a loopback "host" (ssh runs the command here, in its own home)."""
+
+    def setUp(self):
+        super().setUp()
+        t = Path(self.tmp.name)
+        self.remote_home = t / "remote_home"
+        self.remote_home.mkdir()
+        self.bin = t / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "ssh"
+        fake.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import os, sys
+            a = sys.argv[1:]
+            i = 0
+            while i < len(a):
+                if a[i] == "-o":
+                    i += 2
+                elif a[i] in ("-t", "--"):
+                    i += 1
+                else:
+                    break
+            rest = a[i + 1:]  # a[i] is the host
+            os.chdir({str(self.remote_home)!r})
+            if len(rest) == 1:
+                os.execvp("sh", ["sh", "-c", rest[0]])
+            os.execvp(rest[0], rest)
+            """))
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        # Stub for "omni-agent" on the host: logs its arguments and, with --write, changes the project copy
+        self.stub = t / "stub"
+        self.stub.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import json, os, sys
+            a = sys.argv[1:]
+            with open({str(t / "stub.log")!r}, "a") as f:
+                f.write(json.dumps(a) + "\\n")
+            if "--project" in a and "--write" in a:
+                p = a[a.index("--project") + 1]
+                open(os.path.join(p, "app.py"), "a").write("print('agent')\\n")
+                open(os.path.join(p, "new.txt"), "w").write("new\\n")
+                os.remove(os.path.join(p, "old.txt"))
+                os.makedirs(os.path.join(p, ".git", "hooks"), exist_ok=True)
+                open(os.path.join(p, ".git", "hooks", "pre-commit"), "w").write("evil")
+            print("stub done")
+            """))
+        self.stub.chmod(self.stub.stat().st_mode | stat.S_IEXEC)
+        self.env = {**os.environ, "OMNI_AGENT_HOME": str(self.home), "HOME": str(self.remote_home), "PATH": f"{self.bin}:{os.environ['PATH']}"}
+        self.env.pop("OMNI_AGENT_SESSION", None)
+        self.cli("host", "add", "mini", "--ssh", "alex@mini", "--command", str(self.stub))
+        self.proj = t / "proj"
+        self.proj.mkdir()
+        (self.proj / "app.py").write_text("print('hi')\n")
+        (self.proj / "old.txt").write_text("old\n")
+        (self.proj / ".env").write_text("SECRET=1\n")
+        (self.proj / "node_modules").mkdir()
+        (self.proj / "node_modules" / "x.js").write_text("x")
+
+    def cli(self, *args, cwd=None, **env):
+        return subprocess.run([sys.executable, str(BIN), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=120, cwd=cwd)
+
+    def stub_calls(self):
+        f = Path(self.tmp.name) / "stub.log"
+        return [json.loads(z) for z in f.read_text().splitlines()] if f.exists() else []
+
+    def remote_copy(self):
+        return next((self.remote_home / ".omni-agent" / "remote" / "projects").iterdir())
+
+    def test_project_goes_over_without_secrets_and_the_command_points_at_the_copy(self):
+        res = self.cli("run", "--host", "mini", "--project", str(self.proj), "--text", "look")
+        self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+        call = self.stub_calls()[-1]
+        self.assertEqual(call[call.index("--project") + 1], f".omni-agent/remote/projects/{self.remote_copy().name}")
+        self.assertNotIn(str(self.proj), " ".join(call))
+        names = sorted(p.name for p in self.remote_copy().rglob("*") if p.is_file())
+        self.assertEqual(names, ["app.py", "old.txt"])  # no .env, no node_modules
+        self.assertIn("Kept at home", res.stdout)
+
+    def test_with_env_sends_env_files(self):
+        self.cli("run", "--host", "mini", "--project", str(self.proj), "--with-env", "--text", "look")
+        self.assertTrue((self.remote_copy() / ".env").is_file())
+        self.assertNotIn("--with-env", " ".join(self.stub_calls()[-1]))
+
+    def test_apply_shows_first_and_writes_only_with_yes(self):
+        self.cli("run", "--host", "mini", "--project", str(self.proj), "--write", "--text", "edit")
+        shown = self.cli("apply", "--host", "mini", "--project", str(self.proj))
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn("1 added, 1 changed, 1 deleted", shown.stdout)
+        self.assertIn("+print('agent')", shown.stdout)
+        self.assertEqual((self.proj / "app.py").read_text(), "print('hi')\n")  # untouched
+        done = self.cli("apply", "--host", "mini", "--project", str(self.proj), "--yes")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.proj / "app.py").read_text(), "print('hi')\nprint('agent')\n")
+        self.assertEqual((self.proj / "new.txt").read_text(), "new\n")
+        self.assertFalse((self.proj / "old.txt").exists())
+        self.assertFalse((self.proj / ".git").exists())  # nothing from the host may land in .git
+        self.assertIn("No changes", self.cli("apply", "--host", "mini", "--project", str(self.proj)).stdout)
+
+    def test_apply_skips_files_changed_here_unless_forced(self):
+        self.cli("run", "--host", "mini", "--project", str(self.proj), "--write", "--text", "edit")
+        (self.proj / "app.py").write_text("my own change\n")
+        res = self.cli("apply", "--host", "mini", "--project", str(self.proj), "--yes")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("SKIPPED  app.py", res.stdout)
+        self.assertEqual((self.proj / "app.py").read_text(), "my own change\n")
+        self.assertTrue((self.proj / "new.txt").exists())  # the rest was applied
+        forced = self.cli("apply", "--host", "mini", "--project", str(self.proj), "--yes", "--force")
+        self.assertEqual(forced.returncode, 0, forced.stdout)
+        self.assertEqual((self.proj / "app.py").read_text(), "print('hi')\nprint('agent')\n")
+
+    def test_second_run_removes_files_that_are_gone_here(self):
+        self.cli("run", "--host", "mini", "--project", str(self.proj), "--text", "one")
+        (self.proj / "old.txt").unlink()
+        self.cli("run", "--host", "mini", "--project", str(self.proj), "--text", "two")
+        self.assertFalse((self.remote_copy() / "old.txt").exists())
+
+    def test_apply_without_a_sent_project_says_what_to_do(self):
+        res = self.cli("apply", "--project", str(self.proj))
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("Nothing was sent", res.stderr)
+
+    def test_files_folder_is_copied_to_the_host(self):
+        files = Path(self.tmp.name) / "material"
+        files.mkdir()
+        (files / "data.csv").write_text("a,b\n")
+        res = self.cli("run", "--host", "mini", "--files", str(files), "--text", "analyse")
+        self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+        call = self.stub_calls()[-1]
+        remote = call[call.index("--files") + 1]
+        self.assertTrue(remote.startswith(".omni-agent/remote/files/"))
+        self.assertTrue((self.remote_home / remote / "data.csv").is_file())
+
+    def test_default_host_and_local_override(self):
+        self.assertEqual(self.cli("host", "default", "mini").returncode, 0)
+        self.assertIn("(default)", self.cli("host", "list").stdout)
+        res = self.cli("run", "--text", "hello")
+        self.assertIn("the default", res.stdout)
+        self.assertEqual(self.stub_calls()[-1][0], "run")
+        before = len(self.stub_calls())
+        local = self.cli("run", "--host", "local", "--provider", "gibt-es-nicht", "--text", "hello")
+        self.assertEqual(local.returncode, 2)  # ran here: unknown provider
+        self.assertEqual(len(self.stub_calls()), before)
+        self.cli("host", "default", "--clear")
+        self.assertNotIn("(default)", self.cli("host", "list").stdout)
+
+    def test_removing_the_default_host_clears_the_default(self):
+        self.cli("host", "default", "mini")
+        self.cli("host", "remove", "mini")
+        self.assertIn("No default host", self.cli("host", "default").stdout)
+
+    def test_review_runs_on_the_host_with_the_diff_sent_as_files(self):
+        repo = Path(self.tmp.name) / "repo"
+        repo.mkdir()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q")
+        (repo / "a.py").write_text("x = 1\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "one")
+        (repo / "a.py").write_text("x = 2\n")
+        res = self.cli("review", "--host", "mini", "--provider", "codex", cwd=repo)
+        self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+        call = self.stub_calls()[-1]
+        self.assertEqual(call[0], "run")
+        remote = call[call.index("--files") + 1]
+        self.assertIn("+x = 2", (self.remote_home / remote / "changes.patch").read_text())
+        self.assertIn("codex", call)
 
 
 if __name__ == "__main__":

@@ -264,7 +264,7 @@ def execute(args) -> int:
     if not task_text.strip():
         raise ConfigError("The task is empty")
 
-    base_url = provider.base_url
+    base_url = provider.address(protocol)
     if args.via_litellm:
         key_value = next(iter(key_values.values()), "")
         base_url, master = extras.start_proxy(provider, model, key_value)

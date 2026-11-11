@@ -163,6 +163,16 @@ def run_review(args) -> int:
     with tempfile.TemporaryDirectory() as files:
         (Path(files) / "changes.patch").write_text(doc["diff"], encoding="utf-8")
         (Path(files) / "changed_files.txt").write_text(doc["names"], encoding="utf-8")
+        host = getattr(args, "host", None)
+        if host:
+            # The diff is collected and checked here; only the two small files go to the host, the run happens there.
+            from . import hosts, remote_project
+            remote = remote_project.sync(host, Path(files), "files")
+            argv = ["run", "--text", task, "--files", remote, "--tools", "read,write", "--max-turns", str(args.max_turns), "--timeout", str(args.time_limit)]
+            for flag, value in (("--provider", args.provider), ("--model", args.model), ("--runner", args.runner), ("--effort", args.effort)):
+                if value:
+                    argv += [flag, value]
+            return hosts.forward(host, argv, None)
         run_args = argparse.Namespace(
             task=None, text=task, provider=args.provider, model=args.model, runner=args.runner,
             tool_list="read,write", max_turns=args.max_turns, time_limit=args.time_limit, folder=None,
