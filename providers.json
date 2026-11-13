@@ -18,12 +18,11 @@
       "protocols": ["anthropic"],
       "base_url": "https://openrouter.ai/api",
       "key_envs": ["OPENROUTER_API_KEY"],
-      "models": {},
+      "models": {"default": "z-ai/glm-5.3-flash", "strong": "z-ai/glm-5.3", "small": "z-ai/glm-5.3-flash"},
       "empty_vars": ["ANTHROPIC_API_KEY"],
       "region": "not documented",
-      "verified": false,
-      "note": "Choose the model with --model (name from the OpenRouter catalog). According to the Claude Code docs only Anthropic is guaranteed as a provider; other models work but are not guaranteed. ANTHROPIC_API_KEY is passed to the run empty.",
-      "model_required": true
+      "verified": true,
+      "note": "Default and small tier z-ai/glm-5.3-flash (cheap), strong tier z-ai/glm-5.3. Choose another model with --model (name from the OpenRouter catalog). According to the Claude Code docs only Anthropic is guaranteed as a provider; other models work but are not guaranteed. ANTHROPIC_API_KEY is passed to the run empty."
     },
     {
       "id": "kimi",

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+
+- **OpenRouter live tested** with `z-ai/glm-5.3-flash`. Default model `z-ai/glm-5.3-flash` (cheap), strong tier `z-ai/glm-5.3`, so `--model` is no longer required.
+
 ## 1.4.0
 
 - **Projects on other machines.** `run --host NAME --project` (and `--files`) copies the project to the host with rsync (git-tracked plus new files, never `.git`, never secrets), the agent works on that copy, and `omni-agent apply --host NAME` shows the changes as a diff; `--yes` writes them into your project. Conflicts with local edits are skipped, paths from the host are validated. `/omni-agent:apply`. Live tested on a Mac mini over a Tailscale address.

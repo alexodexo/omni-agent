@@ -56,9 +56,16 @@ class Providers(unittest.TestCase):
             self.assertIn(expected, show_all)
 
     def test_model_required(self):
+        from omni_agent.providers import _from_dict
+        entry = _from_dict({"id": "x", "name": "X", "protocols": ["anthropic"], "base_url": "https://x.example", "key_envs": [],
+                            "models": {}, "region": "r", "note": "n", "verified": False, "model_required": True}, "test")
         with self.assertRaises(ConfigError):
-            get_provider("openrouter").pick_model(None)
-        self.assertEqual(get_provider("openrouter").pick_model("x/y"), "x/y")
+            entry.pick_model(None)
+        self.assertEqual(entry.pick_model("x/y"), "x/y")
+
+    def test_openrouter_has_default_model(self):
+        self.assertEqual(get_provider("openrouter").pick_model(None), "z-ai/glm-5.3-flash")
+        self.assertEqual(get_provider("openrouter").pick_model("strong"), "z-ai/glm-5.3")
 
     def test_short_name(self):
         self.assertEqual(get_provider("deepseek").pick_model("strong"), "deepseek-v4-pro")

@@ -186,7 +186,7 @@ deepseek         Balance 9.18 USD (topped up 9.18)
 | DeepSeek, Kimi, OpenRouter, EUrouter | Balance query of the provider | Balance with currency |
 | Ollama, Nvidia, custom providers | – | explicitly says "no query known" or "runs locally" |
 
-The key goes only to the provider it belongs to. Live tested: Claude accounts, Codex, DeepSeek and EUrouter (glm-5.3). Kimi and OpenRouter are built from their documentation. With `--host mini` you query the accounts and logins on another machine.
+The key goes only to the provider it belongs to. Live tested: Claude accounts, Codex, DeepSeek, EUrouter (glm-5.3) and OpenRouter (glm-5.3-flash). Kimi is built from their documentation. With `--host mini` you query the accounts and logins on another machine.
 
 ## Running on other machines
 
@@ -231,7 +231,7 @@ Keys live in `~/.omni-agent/env` (line `NAME=value`, mode 600) or in an environm
 | Provider | Format | Data location | Live tested | Key |
 |---|---|---|---|---|
 | **deepseek** | Anthropic | **China**, training intended | yes | `DEEPSEEK_API_KEY` |
-| **openrouter** | Anthropic | not documented | no | `OPENROUTER_API_KEY` |
+| **openrouter** | Anthropic | not documented | yes (glm-5.3-flash) | `OPENROUTER_API_KEY` |
 | **kimi** | Anthropic | not documented | no | `MOONSHOT_API_KEY` |
 | **ollama** | Anthropic | **local**, stays on the machine | no | none |
 | **eurouter** | Anthropic and OpenAI | EU (per provider) | yes (glm-5.3) | `EUROUTER_API_KEY` |
